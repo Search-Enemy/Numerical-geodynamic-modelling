@@ -1,0 +1,112 @@
+% Figuring and comparing viscosity map for dry and wet mantle
+% Based on No.2 stress invariant.
+clear all;clf;
+%set parameters of dislocation
+A_dis = [3.5e22,2e18]; %unit :( 1/(Pa.^n.*S) )
+n_dis = [3.5,3];
+m_dis = [0,0];
+Ea_dis = [540000,430000];%unit:(J/mol)
+
+%set parameters of diffusion
+A_dif = [8.7e15,5.3e15]; %unit :( 1/(Pa.^n.*S) )
+n_dif = [1,1];
+m_dif = [-2.5,-2.5];
+Ea_dif = [300000,240000];%unit:(J/mol)
+
+h = 0.001;%unit :(m)
+R = 8.314;%unit :( J/(K*mol) ) 
+miu = 8*10.^10; %unit:(Pa)
+b = 5.*10.^(-10);%unit:(m)
+top_tempeture = 400;%unit:(℃)
+bottom_tempeture = 1400;%unit:(℃)
+top_stress = 3;
+bottom_stress = 9;
+
+% set stress condition unit:(Pa)
+stop = top_stress;
+sbottom = bottom_stress;
+snumber = 51;
+S = stop:(sbottom-stop)/(snumber-1):sbottom;
+
+% set T condition unit(K)
+ttop = top_tempeture;
+tbottom = bottom_tempeture;
+tnumber = 51;
+T = ttop:(tbottom-ttop)/(tnumber-1):tbottom;
+
+% Setting V_dry and V_wet
+V_dry = zeros(snumber,tnumber);
+V_wet = zeros(snumber,tnumber);
+diff = zeros(snumber,tnumber);
+% Computing viscosity by Eq.6.4 and Eq.6.16
+for j = 1:tnumber%j = 1:Nx
+    for i = 1:snumber
+        % Dry
+        % Why??
+        eterm = Ea_dis(1)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dis = (10.^S(i))/2/( A_dis(1)*((h/b).^m_dis(1))*((10^S(i)/miu).^n_dis(1))*eterm ) ;
+        eterm = Ea_dif(1)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dif = (10.^S(i))/2/( A_dif(1)*((h/b).^m_dif(1))*((10^S(i)/miu).^n_dif(1))*eterm ) ;
+        V_dry(i,j) = 1/(1/V_dis+1/V_dif);
+        % Wet
+        % Why??
+        eterm = Ea_dis(2)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dis = (10.^S(i))/2/( A_dis(2)*((h/b).^m_dis(2))*((10^S(i)/miu).^n_dis(2))*eterm ) ;
+        eterm = Ea_dif(2)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dif = (10.^S(i))/2/( A_dif(2)*((h/b).^m_dif(2))*((10^S(i)/miu).^n_dif(2))*eterm ) ;
+        V_wet(i,j) = 1/(1/V_dis+1/V_dif);
+        % Compare log(V) map for dry and wet condition.
+        diff(i,j) =  log10(V_dry(i,j))-log10(V_wet(i,j));
+    end
+end
+
+% Log10(viscosity in dry)
+figure(1)
+subplot(1,3,1);
+pcolor(S,T,log10(V_dry));
+xlabel('S');
+ylabel('T');
+title('Log10(viscosity in dry)');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading flat
+colorbar
+
+% Log10(viscosity in wet)
+subplot(1,3,2);
+pcolor(S,T,log10(V_wet));
+xlabel('S');
+ylabel('T');
+title('Log10(viscosity in wet)');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading flat
+colorbar
+
+% Subtract Log10(wet) from Log10(dry)
+subplot(1,3,3);
+pcolor(S,T,diff);
+xlabel('S');
+ylabel('T');
+title('Different between dry and wet.');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading flat
+colorbar
+
