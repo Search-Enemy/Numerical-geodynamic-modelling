@@ -1,0 +1,137 @@
+% Modify Exercise 6.3 by adding Peierls creep for the high stress region.
+% (>10^8Pa)
+% Figuring and comparing viscosity map for dry and wet mantle
+% Based on No.2 stress invariant.
+clear all;clf;
+%set parameters of dislocation
+A_dis = [3.5e22,2e18]; %unit :( 1/(Pa.^n.*S) )
+n_dis = [3.5,3];
+m_dis = [0,0];
+Ea_dis = [540000,430000];%unit:(J/mol)
+
+%set parameters of diffusion
+A_dif = [8.7e15,5.3e15]; %unit :( 1/(Pa.^n.*S) )
+n_dif = [1,1];
+m_dif = [-2.5,-2.5];
+Ea_dif = [300000,240000];%unit:(J/mol)
+
+%set parameters of peierls
+A_per = [10^(-4.2),10^(-4.2)]; %unit :( 1/(Pa.^2.*S) )
+k_per = [1,1];
+q_per = [2,2];
+%!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!4300000??
+Ea_per = [540000,430000];%unit:(J/mol)
+sp_per = [9.1e9,2.9e9];
+
+h = 0.001;%unit :(m)
+R = 8.314;%unit :( J/(K*mol) ) 
+miu = 8*10.^10; %unit:(Pa)
+b = 5.*10.^(-10);%unit:(m)
+top_tempeture = 400;%unit:(℃)
+bottom_tempeture = 1400;%unit:(℃)
+top_stress = 3;
+bottom_stress = 10;
+
+% set stress condition unit:(Pa)
+stop = top_stress;
+sbottom = bottom_stress;
+snumber = 51;
+S = stop:(sbottom-stop)/(snumber-1):sbottom;
+
+% set T condition unit(K)
+ttop = top_tempeture;
+tbottom = bottom_tempeture;
+tnumber = 51;
+T = ttop:(tbottom-ttop)/(tnumber-1):tbottom;
+
+% Setting V_dry and V_wet
+V_dry = zeros(snumber,tnumber);
+V_wet = zeros(snumber,tnumber);
+diff = zeros(snumber,tnumber);
+% Computing viscosity by Eq.6.4 and Eq.6.16
+for j = 1:tnumber%j = 1:Nx
+    for i = 1:snumber
+        coes = (1-(min(10^S(i),sp_per(1))/sp_per(1))^k_per(1))^q_per(1);
+        coee = Ea_per(1)/R/(T(j)+273);% P = 0;
+        V_per = 1/(2*A_per(1)*min(10^S(i),sp_per(1)))* exp(coee*coes);
+        
+        % Dry
+        % Why??
+        eterm = Ea_dis(1)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dis = (10.^S(i))/2/( A_dis(1)*((h/b).^m_dis(1))*((10^S(i)/miu).^n_dis(1))*eterm ) ;
+        eterm = Ea_dif(1)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dif = (10.^S(i))/2/( A_dif(1)*((h/b).^m_dif(1))*((10^S(i)/miu).^n_dif(1))*eterm ) ;
+        if(S(i)>8)
+            V_dry(i,j) = 1/(1/V_dis+1/V_dif+1/V_per);
+        else
+            V_dry(i,j) = 1/(1/V_dis+1/V_dif);
+        end
+        % Wet
+        % Why??
+        coes = (1-(min(10^S(i),sp_per(2))/sp_per(2))^k_per(2))^q_per(2);
+        coee = Ea_per(2)/R/(T(j)+273);% P = 0;
+        V_per = 1/(2*A_per(2)*min(10^S(i),sp_per(2)))* exp(coee*coes);
+        eterm = Ea_dis(2)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dis = (10.^S(i))/2/( A_dis(2)*((h/b).^m_dis(2))*((10^S(i)/miu).^n_dis(2))*eterm ) ;
+        eterm = Ea_dif(2)/R/(T(j)+273);
+%         if (eterm>100) 
+%             eterm=100; 
+%         end
+        eterm=exp(-eterm);
+        V_dif = (10.^S(i))/2/( A_dif(2)*((h/b).^m_dif(2))*((10^S(i)/miu).^n_dif(2))*eterm ) ;
+        % Compare log(V) map for dry and wet condition.
+        if(S(i)>8)
+            V_wet(i,j) = 1/(1/V_dis+1/V_dif+1/V_per);
+        else
+            V_wet(i,j) = 1/(1/V_dis+1/V_dif);
+        end
+        diff(i,j) =  log10(V_dry(i,j))-log10(V_wet(i,j));
+
+    end
+end
+
+% Log10(viscosity in dry)
+figure(1)
+subplot(1,3,1);
+pcolor(S,T,log10(V_dry));
+xlabel('S');
+ylabel('T');
+title('Log10(viscosity in dry)');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading interp;
+colorbar
+
+% Log10(viscosity in wet)
+subplot(1,3,2);
+pcolor(S,T,log10(V_wet));
+xlabel('S');
+ylabel('T');
+title('Log10(viscosity in wet)');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading interp;
+colorbar
+
+% Subtract Log10(wet) from Log10(dry)
+subplot(1,3,3);
+pcolor(S,T,diff);
+xlabel('S');
+ylabel('T');
+title('Different between dry and wet.');
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading interp;
+colorbar
