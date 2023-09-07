@@ -1,0 +1,50 @@
+% Viscosity profile (based on strain rate invariant)
+% set parameters
+A_D = 2.5.*10.^(-17); %unit :( 1/(Pa.^n.*S) )
+n = 3.5;
+Ea = 532000;%unit:(J/mol)
+m = 0;
+Va = 0;
+h = 0.001;%unit :(m)
+strain_rateII = 10.^(-14); %unit:(s.^(-1))
+P = 0;%unit :(Pa)
+R = 8.314;%unit :( J/(K*mol) ) 
+% Note that givened unit of T is ℃ rather than K，so you need add 273
+top_tempeture = 400;%unit:(℃)
+bottom_tempeture = 1200;%unit:(℃)
+
+% set T profile unit(K)
+ttop = top_tempeture;
+tbottom = bottom_tempeture;
+tnumber = 51;
+T = ttop:(tbottom-ttop)/(tnumber-1):tbottom;
+% mantle thick
+thick = 100;%unit(Km)
+mantle = 0:thick/(tnumber-1):100;
+
+%set viscosity profile
+viscosity = zeros(1,tnumber);
+for i = 1:tnumber
+    F2 = 1./( 2.^( (n-1)/n ) .* 3.^( (n+1)/(2*n) )  );
+    excess1 = 1./( A_D.^(1/n) .* h.^(m/n) .* strain_rateII.^( (n-1)/n ) );
+    excess2 = exp( (Ea+Va*P)./(n*R*(T(i)+273)) ) ;
+    viscosity(i) = F2*excess1*excess2;
+end
+
+%tempeture field
+figure(1);
+plot(mantle,T);
+xlabel('mantle depth(Km)');
+ylabel('T');
+title('T(tempeture) field of 100(Km) thick mantle lithosphere')
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+
+%logarithmic viscosity field
+figure(2);
+plot( mantle,log10(viscosity) );
+xlabel('mantle depth(Km)');
+ylabel('log10(viscosity)');
+title('Log10(viscosity) field of 100(Km) thick mantle lithosphere.')
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse');
