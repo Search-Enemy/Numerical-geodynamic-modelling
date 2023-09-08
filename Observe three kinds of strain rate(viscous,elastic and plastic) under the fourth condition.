@@ -1,0 +1,48 @@
+% Exercise 12.3
+clear all;clf;
+% Parameters
+vis = [1e21  , 1e21  , 1e21  , 1e22  , 1e21  , 1e22 ];% Pa*s
+s0p = [0     , 1e8   , 0     , 0     , 0     , 0    ];% Pa
+ep =  [1e-14 , 1e-14 , 1e-15 , 1e-14 , 1e-14 , 1e-14];% 1/s
+miu = [1e10  , 1e10  , 1e10  , 1e10  , 1e11  , 1e11 ];% Pa
+
+MAXt = 10e+2*(365.25*24*3600)*100;
+Nt = 101;
+dt = MAXt/(Nt-1);
+sp = zeros(6,Nt);
+spyield = 1.5e8;
+srvis = zeros(6,Nt);
+srela = zeros(6,Nt);
+srpla = zeros(6,Nt);
+sr = zeros(6,Nt);
+t = 0:dt:MAXt;
+
+for i = 1:Nt
+    j = 4;
+    sp(j,i) = 2*vis(j)*ep(j) + (s0p(j)-2*vis(j)*ep(j))*exp(-t(i)*miu(j)/vis(j));
+    if(sp(j,i)>spyield)
+        sp(j,i) = spyield;
+        % This is surprising...
+        srvis(j,i) = sp(j,i)/(2*vis(j));
+        srela(j,i) = 0;
+        srpla(j,i) = ep(j) - srvis(j,i);
+    else
+        srvis(j,i) = sp(j,i)/(2*vis(j));
+        srela(j,i) = ep(j)-srvis(j,i);
+        srpla(j,i) = 0;
+    end
+    sr = srvis+srela+srpla;
+end
+
+% s  —> year
+t = t/(365.25*24*3600);
+% Pa —> M*Pa
+sp = sp*1e-6;
+
+figure(1);
+plot(t(1:Nt),srvis(4,1:Nt),'c');
+hold on;
+plot(t(1:Nt),srela(4,1:Nt),'m');
+plot(t(1:Nt),srpla(4,1:Nt),'k');
+xlabel('Time');
+ylabel('vlaue');
