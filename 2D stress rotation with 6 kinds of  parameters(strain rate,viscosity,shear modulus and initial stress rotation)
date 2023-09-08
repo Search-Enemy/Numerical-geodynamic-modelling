@@ -1,0 +1,32 @@
+% Exercise 12.2
+clear all;clf;
+vis = [1e21  , 1e21  , 1e21  , 1e22  , 1e21  , 1e22 ];% Pa*s
+s0p = [0     , 1e8   , 0     , 0     , 0     , 0    ];% Pa
+ep =  [1e-14 , 1e-14 , 1e-15 , 1e-14 , 1e-14 , 1e-14];% 1/s
+miu = [1e10  , 1e10  , 1e10  , 1e10  , 1e11  , 1e11 ];% Pa
+
+MAXt = 3e+2*(365.25*24*3600)*100;
+Nt = 101;
+dt = MAXt/(Nt-1);
+sp = zeros(6,Nt);
+t = 0:dt:MAXt;
+for j = 1:6
+    for i = 1:Nt
+        sp(j,i) = 2*vis(j)*ep(j) + (s0p(j)-2*vis(j)*ep(j))*exp(-t(i)*miu(j)/vis(j));
+    end
+end
+% s  —> year
+t = t/(365.25*24*3600);
+% Pa —> M*Pa
+sp = sp*1e-6;
+
+figure(1);
+plot(t,sp(1,:),'r');
+hold on;
+plot(t,sp(2,:),'k');
+plot(t,sp(3,:),'b');
+plot(t,sp(4,:),'c');
+plot(t,sp(5,:),'g');
+plot(t,sp(6,:),'m');
+xlabel('Time');
+ylabel('vlaue');
