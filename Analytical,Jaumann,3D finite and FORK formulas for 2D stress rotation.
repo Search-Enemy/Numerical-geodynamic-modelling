@@ -1,0 +1,159 @@
+% Setting parameters
+w = 1;
+% One revolution.
+MAXt = 2*pi/w;
+Nt = 101;
+dt = MAXt/(Nt-1);
+% Initialize state.
+% A:Analytical formula.
+sxyA = zeros(1,Nt);
+sxxA = zeros(1,Nt);
+syyA = zeros(1,Nt);
+% B:Jaumann formula.
+sxyB = zeros(1,Nt);
+sxxB = zeros(1,Nt);
+syyB = zeros(1,Nt);
+% D:Jaumann formula.
+sxyD = zeros(1,Nt);
+sxxD = zeros(1,Nt);
+syyD = zeros(1,Nt);
+sxzD = zeros(1,Nt);
+syzD = zeros(1,Nt);
+szzD = zeros(1,Nt);
+wx = 0;
+wy = 0;
+wz = w;
+wmag = sqrt(wx^2+wy^2+wz^2);
+nx = wx/wmag;
+ny = wy/wmag;
+nz = wz/wmag;
+% C:Fourth-order Runge-Kutta formula.
+sxyC = zeros(1,Nt);
+sxxC = zeros(1,Nt);
+syyC = zeros(1,Nt);
+sxzC = zeros(1,Nt);
+syzC = zeros(1,Nt);
+szzC = zeros(1,Nt);
+wyx = w;
+wxy = -w;
+wxz = 0;
+wzx = 0;
+wyz = 0;
+wzy = 0;
+
+% Initial stress state.
+sxyA(1) = 0;
+sxxA(1) = 10^6;
+syyA(1) = -10^6;
+sxyB(1) = 0;
+sxxB(1) = 10^6;
+syyB(1) = -10^6;
+sxyD(1) = 0;
+sxxD(1) = 10^6;
+syyD(1) = -10^6;
+sxzD(1) = 0;
+syzD(1) = 0;
+szzD(1) = 0;
+sxyC(1) = 0;
+sxxC(1) = 10^6;
+syyC(1) = -10^6;
+sxzC(1) = 0;
+syzC(1) = 0;
+szzC(1) = 0;
+% SIGMAROTATED = zeros(1,Nt);
+SIGMAROTATED = [sxxD(1) sxyD(1) sxzD(1)
+                sxyD(1) syyD(1) syzD(1)
+                sxzD(1) syzD(1) szzD(1)];
+time = 0:dt:MAXt;
+
+for i = 1:Nt-1
+    % The angle is the current moment relative to the previous moment
+    % Note that the angle not correspond to initial state.(Like below)
+    % angle = w*t_number(i)*dt;  This Line is not right.
+    angleAB = w*dt;
+    % A:Analytical formula.
+    sxyA(i+1) = (1/2)*(sxxA(i)-syyA(i))*sin(2*angleAB)+sxyA(i)*cos(2*angleAB);
+    sxxA(i+1) = sxxA(i)*(cos(angleAB))^2+syyA(i)*(sin(angleAB))^2-sxyA(i)*sin(2*angleAB) ;
+    syyA(i+1) = sxxA(i)*(sin(angleAB))^2+syyA(i)*(cos(angleAB))^2+sxyA(i)*sin(2*angleAB) ;
+    % B:Jaumann formula.
+    sxyB(i+1) = sxyB(i) + (sxxB(i)-syyB(i))*angleAB;
+    sxxB(i+1) = sxxB(i) - sxyB(i)*2*angleAB;
+    syyB(i+1) = syyB(i) + sxyB(i)*2*angleAB;
+    % D:3D finite formula.
+    angleD = wmag*dt;
+    Rmat = cos(angleD)*[1 0 0;0 1 0;0 0 1] + sin(angleD)*[0 -nz ny;nz 0 -nx;-ny nx 0]...
+          +(1-cos(angleD))*[nx*nx nx*ny nx*nz;ny*nx ny*ny ny*nz;nz*nx nz*ny nz*nz];
+    SIGMAROTATED = Rmat*SIGMAROTATED*Rmat';
+    sxxD(i+1) = SIGMAROTATED(1);
+    sxyD(i+1) = SIGMAROTATED(2);
+    sxzD(i+1) = SIGMAROTATED(3);
+    syyD(i+1) = SIGMAROTATED(5);
+    syzD(i+1) = SIGMAROTATED(6);
+    szzD(i+1) = SIGMAROTATED(9);
+    SIGMAROTATED = [sxxD(i+1) sxyD(i+1) sxzD(i+1)
+                    sxyD(i+1) syyD(i+1) syzD(i+1)
+                    sxzD(i+1) syzD(i+1) szzD(i+1)];
+    % C:Fourth-order Runge-Kutta formula.
+    sxy = sxyC(i);
+    sxx = sxxC(i);
+    syy = syyC(i);
+    sxz = sxzC(i);
+    syz = syzC(i);
+    szz = szzC(i);
+    sxxCm = zeros(1,4);
+    syyCm = zeros(1,4);
+    sxyCm = zeros(1,4);
+    for rk = 1:1:4
+        sxxCm(rk) = 2*sxy*wxy + 2*sxz*wxz;
+        syyCm(rk) = 2*sxy*wyx + 2*syz*wyz;
+        sxyCm(rk) = (sxx-syy)*wyx + wxz*syz - sxz*wzy;
+        if(rk == 1 || rk == 2)
+            sxy = sxyC(i) + sxyCm(rk)*dt/2;
+            sxx = sxxC(i) + sxxCm(rk)*dt/2;
+            syy = syyC(i) + syyCm(rk)*dt/2;
+        elseif(rk == 3)
+            sxy = sxyC(i) + sxyCm(rk)*dt;
+            sxx = sxxC(i) + sxxCm(rk)*dt;
+            syy = syyC(i) + syyCm(rk)*dt;
+        end
+    end
+    sxxC(i+1) = (1/6)*(sxxCm(1)+2*sxxCm(2)+2*sxxCm(3)+sxxCm(4))*dt+sxxC(i);
+    syyC(i+1) = (1/6)*(syyCm(1)+2*syyCm(2)+2*syyCm(3)+syyCm(4))*dt+syyC(i);
+    sxyC(i+1) = (1/6)*(sxyCm(1)+2*sxyCm(2)+2*sxyCm(3)+sxyCm(4))*dt+sxyC(i);
+end
+
+figure(1);
+% Plot sxy
+subplot(1,3,1);
+plot(time,sxyA,'k');
+hold on;
+plot(time,sxyB,'b');
+plot(time,sxyD,'g');
+plot(time,sxyC,'m');
+xlabel('Time');
+ylabel('value');
+pause(0.01);
+title('sxy(A)');
+% Plot sxx
+subplot(1,3,2);
+plot(time,sxxA,'k');
+hold on;
+plot(time,sxxB,'b');
+plot(time,sxxD,'g');
+plot(time,sxxC,'m');
+xlabel('Time');
+ylabel('value');
+pause(0.01);
+title('sxx(A)');
+% Plot syy
+subplot(1,3,3);
+plot(time,syyA,'k');
+hold on;
+plot(time,syyB,'b');
+plot(time,syyD,'g');
+plot(time,syyC,'m');
+xlabel('Time');
+ylabel('value');
+pause(0.01);
+title('syy(A)');
+
