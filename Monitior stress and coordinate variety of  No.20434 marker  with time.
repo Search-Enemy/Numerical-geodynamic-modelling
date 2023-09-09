@@ -4,7 +4,6 @@ w =1;
 MAXt = 2*pi/w;
 Nt = 101;
 dt = MAXt/(Nt-1);
-
 output_interval = 1;
 Lx = 1; % m
 Ly = 1;
@@ -72,40 +71,29 @@ for j = 1:Nx1
     end
 end
 % Computing average velocity components at cell centres.
-for j = 1:Nx1
+for j = 2:Nx
     for i = 1:Ny1
-        %  Computing internal Vx and Vy at the P nodes.
-        if (j~=1 && i ~=1 && j~=Nx1 && i~=Ny1)
-            % Vx at internal nodes.
-            pvx(i,j) = ( vx(i,j) + vx(i,j-1) )./2;
-            % Vy at internal nodes.
-            pvy(i,j) = ( vy(i,j) + vy(i-1,j) )./2;
-        end
+        % Vx at internal nodes.Nx*Ny1
+        pvx(i,j) = ( vx(i,j) + vx(i,j-1) )./2;
     end
 end
-% Applying free-slip boundary condition for velocity in the P nodes .
 for j = 1:Nx1
-    for i = 1:Ny1
-        if ( i==1 || i==Ny )
-            % Top and Bottom
-            % Vx
-            if(j>1 && j<Nx1)
-                pvx(i,j) = pvx(i+1,j);
-            end
-            % Vy
-            pvy(i,j) = pvy(i+1,j);
-        end
-        if (j==1 || j==Nx)
-            % Right and Left
-            % Vy
-            if(i>1 && i< Ny1)
-                pvy(i,j) = pvy(i,j+1);
-            end
-            % Vx
-            pvx(i,j) = pvx(i,j+1);
-        end
+    for i = 2:Ny
+        % Vy at internal nodes.Nx1*Ny
+        pvy(i,j) = ( vy(i,j) + vy(i-1,j) )./2;
     end
 end
+
+% Apply BC to pvx
+% Left
+pvx(:,1)=w*(ymid-yp(:));
+% Right
+pvx(:,Nx1)=w*(ymid-yp(:));
+% Apply BC to vyp
+% Top
+pvy(1,:)=w*(xp(:)-xmid);
+% Bottom
+pvy(Ny1,:)=w*(xp(:)-xmid);
 
 
 % Computing wyx for basic nodals points using finite differences.
@@ -151,8 +139,13 @@ for jm = 1:Nx_marker
         m = m+1;
     end
 end
+% Method Analytical==1,Jauamnna==2,FOourth-order RK==3,3Dfinite==4.
+method = 3;
 xcoor = zeros(Nt,1);xcoor(1) = xm(20434);
+ycoor = zeros(Nt,1);ycoor(1) = ym(20434);
 stressxx = zeros(Nt,1);
+stressyy = zeros(Nt,1);
+stressxy = zeros(Nt,1);
 for t = 1:Nt
     % Define Vxa(Vya)1,Vxb(Vyb)2,Vxc(Vyc)3,Vxd(Vyd)4.
     vxm=zeros(4,1);
@@ -162,7 +155,7 @@ for t = 1:Nt
     WXYCW = zeros(Ny,Nx);
     % Interpolate vx,vy and xyx from nodes to markers.
     for m=1:1:marknum
-        if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 <= 0.5^2)
+        if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 < 0.5^2)
             j=fix((xm(m)-x(1))/dx)+1;
             i=fix((ym(m)-y(1))/dy)+1;
             if(j<1)
@@ -179,13 +172,9 @@ for t = 1:Nt
             dis_x = xm(m)-x(j);
             dis_y = ym(m)-y(i);
             wtmij = (1-dis_x/dx)*(1-dis_y/dy);
-            wtmi1j = (dis_x/dx)*(1-dis_y/dy);
-            wtmij1 = (1-dis_x/dx)*(dis_y/dy);
+            wtmi1j = (1-dis_x/dx)*(dis_y/dy);
+            wtmij1 = (dis_x/dx)*(1-dis_y/dy);
             wtmi1j1 = (dis_x/dx)*(dis_y/dy);
-            vym(m)=vy(i,j)*wtmij+vy(i+1,j)*wtmi1j+...
-                vy(i,j+1)*wtmij1+vy(i+1,j+1)*wtmi1j1;
-            vxm(m)=vx(i,j)*wtmij+vx(i+1,j)*wtmi1j+...
-                vx(i,j+1)*wtmij1+vx(i+1,j+1)*wtmi1j1;
             wyxm(m)=wyx(i,j)*wtmij+wyx(i+1,j)*wtmi1j+...
                 wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
 %         end
@@ -238,8 +227,8 @@ for t = 1:Nt
                 i=fix((ym(m)-yp(1))/dy)+1;
                 if(j<1)
                     j=1;
-                elseif(j>Nx-1)
-                    j=Nx-1;
+                elseif(j>Nx)
+                    j=Nx;
                 end
                 % Vx staggered nodes.(Nx_node * Ny_node+1)
                 if(i<1)
@@ -252,8 +241,8 @@ for t = 1:Nt
                 dis_y=ym(m)-yp(i);
                 % Compute weights
                 wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-                wtmi1j=(dis_x/dx)*(1-dis_y/dy);
-                wtmij1=(1-dis_x/dx)*(dis_y/dy);
+                wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+                wtmij1=(dis_x/dx)*(1-dis_y/dy);
                 wtmi1j1=(dis_x/dx)*(dis_y/dy);
                 % Compute vx velocity
                 vxm(rk) = pvx(i,j)*wtmij+pvx(i+1,j)*wtmi1j...
@@ -280,8 +269,8 @@ for t = 1:Nt
                 dis_y=ym(m)-yvx(i);
                 % Compute weights
                 wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-                wtmi1j=(dis_x/dx)*(1-dis_y/dy);
-                wtmij1=(1-dis_x/dx)*(dis_y/dy);
+                wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+                wtmij1=(dis_x/dx)*(1-dis_y/dy);
                 wtmi1j1=(dis_x/dx)*(dis_y/dy);
                 % Compute vx velocity
                 vxcij = (1/3)*(2*vx(i,j));
@@ -322,11 +311,13 @@ for t = 1:Nt
                     +vycij1*wtmij1+vyci1j1*wtmi1j1);
                 
                 if(rk == 1 || rk == 2)
-                    xm(m) = vx(rk)*dt/2 + xa;
-                    ym(m) = vy(rk)*dt/2 + ya;
+                % YOU SHOULD KNOW THAT VECTORY DEPENDS ON SCRUTINY.
+                % xm(m) = vx(rk)*dt/2 + xa;
+                    xm(m) = vxm(rk)*dt/2 + xa;
+                    ym(m) = vym(rk)*dt/2 + ya;
                 elseif(rk == 3)
-                    xm(m) = vx(rk)*dt + xa;
-                    ym(m) = vy(rk)*dt + ya;
+                    xm(m) = vxm(rk)*dt + xa;
+                    ym(m) = vym(rk)*dt + ya;
                 end
             end
             % Return original coordinate.
@@ -339,20 +330,31 @@ for t = 1:Nt
             ym(m)=ym(m)+dt*vyefft;
         end
     end
-    % Monitor the 10th point.
+    % Monitor the 20434th point.
     xcoor(t+1) = xm(20434);
+    ycoor(t+1) = ym(20434);
     stressxx(t) =  sxxCm(20434,t);
+    stressyy(t) =  syyCm(20434,t);
+    stressxy(t) =  sxyCm(20434,t);
 end
+% Monitor coordinates of No.20434 marker.
 figure(1);
 subplot(2,1,1);
-% plot(xcoor(1:Nt-1)-xcoor(1));
-plot(xcoor(1:Nt-1));
-xlabel('T')
-ylabel('xcoor')
+plot(xcoor(1:Nt-1)-xcoor(1),'k');
+hold on;
+plot(ycoor(1:Nt-1)-ycoor(1),'m');
+xlabel('Time')
+ylabel('Coordinate(k==x,m==y)')
+title('Coordinate of No.20434-marker change with time ');
+% Monitor devatoric stress of No.20434 marker.
 subplot(2,1,2);
-plot(stressxx(1:Nt-1));
+plot(stressxx(1:Nt-1)-stressxx(1),'k');
+hold on;
+plot(stressyy(1:Nt-1)-stressyy(1),'m');
+plot(stressxy(1:Nt-1)-stressxy(1),'g');
 xlabel('T');
-ylabel('stress');
+ylabel('Stress(k==xx,m==yy,g==xy)');
+title('Devatoric stress of No.20434-marker change with time');
 
 
 figure(2);
