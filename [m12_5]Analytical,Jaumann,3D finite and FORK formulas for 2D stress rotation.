@@ -124,7 +124,7 @@ end
 
 figure(1);
 % Plot sxy
-subplot(1,3,1);
+subplot(3,1,1);
 plot(time,sxyA,'k');
 hold on;
 plot(time,sxyB,'b');
@@ -132,10 +132,9 @@ plot(time,sxyD,'g');
 plot(time,sxyC,'m');
 xlabel('Time');
 ylabel('value');
-pause(0.01);
 title('sxy(A)');
 % Plot sxx
-subplot(1,3,2);
+subplot(3,1,2);
 plot(time,sxxA,'k');
 hold on;
 plot(time,sxxB,'b');
@@ -143,10 +142,9 @@ plot(time,sxxD,'g');
 plot(time,sxxC,'m');
 xlabel('Time');
 ylabel('value');
-pause(0.01);
 title('sxx(A)');
 % Plot syy
-subplot(1,3,3);
+subplot(3,1,3);
 plot(time,syyA,'k');
 hold on;
 plot(time,syyB,'b');
@@ -154,6 +152,25 @@ plot(time,syyD,'g');
 plot(time,syyC,'m');
 xlabel('Time');
 ylabel('value');
-pause(0.01);
 title('syy(A)');
+% Calculate the difference between Analytical and other formulas.
+figure(2);
+
+subplot(3,1,1);
+plot(time,syyB-syyA,'k');
+xlabel('Time');
+ylabel('value');
+title('syy(B)-syy(A)');
+
+subplot(3,1,2);
+plot(time,syyC-syyA,'m');
+xlabel('Time');
+ylabel('value');
+title('syy(C)-syy(A)');
+
+subplot(3,1,3);
+plot(time,syyD-syyA,'g');
+xlabel('Time');
+ylabel('value');
+title('syy(D)-syy(A)');
 
