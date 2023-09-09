@@ -122,6 +122,24 @@ syzCm = zeros(Ny_marker*Nx_marker,Nt);
 szzCm = zeros(Ny_marker*Nx_marker,Nt);
 vxm = zeros(Ny_marker*Nx_marker,1);
 vym = zeros(Ny_marker*Nx_marker,1);
+% A/B:Analytical/Jaumann formula.
+sxyAm = zeros(Ny_marker*Nx_marker,Nt);
+sxxAm = zeros(Ny_marker*Nx_marker,Nt);
+syyAm = zeros(Ny_marker*Nx_marker,Nt);
+% D:Jaumann formula.
+sxyDm = zeros(Ny_marker*Nx_marker,Nt);
+sxxDm = zeros(Ny_marker*Nx_marker,Nt);
+syyDm = zeros(Ny_marker*Nx_marker,Nt);
+sxzDm = zeros(Ny_marker*Nx_marker,Nt);
+syzDm = zeros(Ny_marker*Nx_marker,Nt);
+szzDm = zeros(Ny_marker*Nx_marker,Nt);
+wx = 0;
+wy = 0;
+wz = w;
+wmag = sqrt(wx^2+wy^2+wz^2);
+nx = wx/wmag;
+ny = wy/wmag;
+nz = wz/wmag;
 
 m=1;
 for jm = 1:Nx_marker
@@ -136,11 +154,28 @@ for jm = 1:Nx_marker
         sxzCm(m,1) = 0;
         syzCm(m,1) = 0;
         szzCm(m,1) = 0;
+        sxyAm(m,1) = 0;
+        sxxAm(m,1) = 10^6;
+        syyAm(m,1) = -10^6;
+        sxyDm(m,1) = 0;
+        sxxDm(m,1) = 10^6;
+        syyDm(m,1) = -10^6;
+        sxzDm(m,1) = 0;
+        syzDm(m,1) = 0;
+        szzDm(m,1) = 0;
         m = m+1;
     end
 end
+SIGMAROTATED = [sxxDm(20434,1) sxyDm(20434,1) sxzDm(20434,1)
+                sxyDm(20434,1) syyDm(20434,1) syzDm(20434,1)
+                sxzDm(20434,1) syzDm(20434,1) szzDm(20434,1)];
+angleD = wmag*dt;
+Rmat = cos(angleD)*[1 0 0;0 1 0;0 0 1] + sin(angleD)*[0 -nz ny;nz 0 -nx;-ny nx 0]...
+    +(1-cos(angleD))*[nx*nx nx*ny nx*nz;ny*nx ny*ny ny*nz;nz*nx nz*ny nz*nz];
+
 % Method Analytical==1,Jauamnna==2,FOourth-order RK==3,3Dfinite==4.
 method = 3;
+
 xcoor = zeros(Nt,1);xcoor(1) = xm(20434);
 ycoor = zeros(Nt,1);ycoor(1) = ym(20434);
 stressxx = zeros(Nt,1);
@@ -154,6 +189,9 @@ for t = 1:Nt
     WBASIC_NODE = zeros(Ny,Nx);
     WXYCW = zeros(Ny,Nx);
     % Interpolate vx,vy and xyx from nodes to markers.
+    if(method==4)
+        SIGMAROTATED = Rmat*SIGMAROTATED*Rmat';
+    end
     for m=1:1:marknum
         if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 < 0.5^2)
             j=fix((xm(m)-x(1))/dx)+1;
@@ -182,34 +220,63 @@ for t = 1:Nt
 %     
 %     % Computing stress rotation for every markers.
 %     for m = 1:marknum
-        sxy = sxyCm(m,t);
-        sxx = sxxCm(m,t);
-        syy = syyCm(m,t);
-        sxz = sxzCm(m,t);
-        syz = syzCm(m,t);
-        szz = szzCm(m,t);
-        sxxCrk = zeros(1,4);
-        syyCrk = zeros(1,4);
-        sxyCrk = zeros(1,4);
-        for rk = 1:1:4
-            % wxym = -wyxm.This condition is uesd in below line.
-            sxxCrk(rk) = 2*sxy*(-wyxm(m)) + 2*sxz*wxz;
-            syyCrk(rk) = 2*sxy*wyxm(m) + 2*syz*wyz;
-            sxyCrk(rk) = (sxx-syy)*wyxm(m) + wxz*syz - sxz*wzy;
-            if(rk == 1 || rk == 2)
-                % You can undestand dt/2 or dt as weight.
-                sxy = sxyCm(m,t) + sxyCrk(rk)*dt/2;
-                sxx = sxxCm(m,t) + sxxCrk(rk)*dt/2;
-                syy = syyCm(m,t) + syyCrk(rk)*dt/2;
-            elseif(rk == 3)
-                sxy = sxyCm(m,t) + sxyCrk(rk)*dt;
-                sxx = sxxCm(m,t) + sxxCrk(rk)*dt;
-                syy = syyCm(m,t) + syyCrk(rk)*dt;
+    switch method
+        case 1
+            angleAB = w*dt;
+            sxyAm(m,t+1) = (1/2)*(sxxAm(m,t)-syyAm(m,t))*sin(2*angleAB)+sxyAm(m,t)*cos(2*angleAB);
+            sxxAm(m,t+1) = sxxAm(m,t)*(cos(angleAB))^2+syyAm(m,t)*(sin(angleAB))^2-sxyAm(m,t)*sin(2*angleAB) ;
+            syyAm(m,t+1) = sxxAm(m,t)*(sin(angleAB))^2+syyAm(m,t)*(cos(angleAB))^2+sxyAm(m,t)*sin(2*angleAB) ;
+        case 2
+            angleAB = w*dt;
+            % Condition of A or B are equal.
+            sxyAm(m,t+1) = sxyAm(m,t) + (sxxAm(m,t)-syyAm(m,t))*angleAB;
+            sxxAm(m,t+1) = sxxAm(m,t) - sxyAm(m,t)*2*angleAB;
+            syyAm(m,t+1) = syyAm(m,t) + sxyAm(m,t)*2*angleAB;
+        case 3
+            sxy = sxyCm(m,t);
+            sxx = sxxCm(m,t);
+            syy = syyCm(m,t);
+            sxz = sxzCm(m,t);
+            syz = syzCm(m,t);
+            szz = szzCm(m,t);
+            sxxCrk = zeros(1,4);
+            syyCrk = zeros(1,4);
+            sxyCrk = zeros(1,4);
+            for rk = 1:1:4
+                % wxym = -wyxm.This condition is uesd in below line.
+                sxxCrk(rk) = 2*sxy*(-wyxm(m)) + 2*sxz*wxz;
+                syyCrk(rk) = 2*sxy*wyxm(m) + 2*syz*wyz;
+                sxyCrk(rk) = (sxx-syy)*wyxm(m) + wxz*syz - sxz*wzy;
+                if(rk == 1 || rk == 2)
+                    % You can undestand dt/2 or dt as weight.
+                    sxy = sxyCm(m,t) + sxyCrk(rk)*dt/2;
+                    sxx = sxxCm(m,t) + sxxCrk(rk)*dt/2;
+                    syy = syyCm(m,t) + syyCrk(rk)*dt/2;
+                elseif(rk == 3)
+                    sxy = sxyCm(m,t) + sxyCrk(rk)*dt;
+                    sxx = sxxCm(m,t) + sxxCrk(rk)*dt;
+                    syy = syyCm(m,t) + syyCrk(rk)*dt;
+                end
             end
-        end
-        sxxCm(m,t+1) = (1/6)*(sxxCrk(1)+2*sxxCrk(2)+2*sxxCrk(3)+sxxCrk(4))*dt+sxxCm(m,t);
-        syyCm(m,t+1) = (1/6)*(syyCrk(1)+2*syyCrk(2)+2*syyCrk(3)+syyCrk(4))*dt+syyCm(m,t);
-        sxyCm(m,t+1) = (1/6)*(sxyCrk(1)+2*sxyCrk(2)+2*sxyCrk(3)+sxyCrk(4))*dt+sxyCm(m,t);
+            sxxCm(m,t+1) = (1/6)*(sxxCrk(1)+2*sxxCrk(2)+2*sxxCrk(3)+sxxCrk(4))*dt+sxxCm(m,t);
+            syyCm(m,t+1) = (1/6)*(syyCrk(1)+2*syyCrk(2)+2*syyCrk(3)+syyCrk(4))*dt+syyCm(m,t);
+            sxyCm(m,t+1) = (1/6)*(sxyCrk(1)+2*sxyCrk(2)+2*sxyCrk(3)+sxyCrk(4))*dt+sxyCm(m,t);
+
+        case 4
+%             angleD = wmag*dt;
+%             Rmat = cos(angleD)*[1 0 0;0 1 0;0 0 1] + sin(angleD)*[0 -nz ny;nz 0 -nx;-ny nx 0]...
+%                 +(1-cos(angleD))*[nx*nx nx*ny nx*nz;ny*nx ny*ny ny*nz;nz*nx nz*ny nz*nz];
+%             SIGMAROTATED = Rmat*SIGMAROTATED*Rmat';
+            sxxDm(20434,t+1) = SIGMAROTATED(1);
+            sxyDm(20434,t+1) = SIGMAROTATED(2);
+            sxzDm(20434,t+1) = SIGMAROTATED(3);
+            syyDm(20434,t+1) = SIGMAROTATED(5);
+            syzDm(20434,t+1) = SIGMAROTATED(6);
+            szzDm(20434,t+1) = SIGMAROTATED(9);
+            SIGMAROTATED = [sxxDm(20434,t+1) sxyDm(20434,t+1) sxzDm(20434,t+1)
+                            sxyDm(20434,t+1) syyDm(20434,t+1) syzDm(20434,t+1)
+                            sxzDm(20434,t+1) syzDm(20434,t+1) szzDm(20434,t+1)];
+    end
 %     end
 %     end
 %     % Marker transport by method of RUNGE-KUTTA 
@@ -333,9 +400,19 @@ for t = 1:Nt
     % Monitor the 20434th point.
     xcoor(t+1) = xm(20434);
     ycoor(t+1) = ym(20434);
-    stressxx(t) =  sxxCm(20434,t);
-    stressyy(t) =  syyCm(20434,t);
-    stressxy(t) =  sxyCm(20434,t);
+    if (method==1 || method ==2)
+        stressxx(t) =  sxxAm(20434,t);
+        stressyy(t) =  syyAm(20434,t);
+        stressxy(t) =  sxyAm(20434,t);
+    elseif(method==3)
+        stressxx(t) =  sxxCm(20434,t);
+        stressyy(t) =  syyCm(20434,t);
+        stressxy(t) =  sxyCm(20434,t); 
+    elseif(method==4)
+        stressxx(t) =  sxxDm(20434,t);
+        stressyy(t) =  syyDm(20434,t);
+        stressxy(t) =  sxyDm(20434,t); 
+    end
 end
 % Monitor coordinates of No.20434 marker.
 figure(1);
