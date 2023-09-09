@@ -59,8 +59,8 @@ ymid = Ly/2;
 % Define a rotational velocity around the model centre.
 % VX NODE:Nx,Ny1
 % VY NODE:Nx1,Ny
-vx = zeros(Ny1,Nx);
-vy = zeros(Ny,Nx1);
+vx = zeros(Ny1,Nx1);
+vy = zeros(Ny1,Nx1);
 for j = 1:Nx
     for i = 1:Ny1
     	vx(i,j) = w*(0.5-yvx(i));
@@ -151,8 +151,7 @@ for jm = 1:Nx_marker
         m = m+1;
     end
 end
-
-xcoor = zeros(Nt,1);
+xcoor = zeros(Nt,1);xcoor(1) = xm(20434);
 stressxx = zeros(Nt,1);
 for t = 1:Nt
     % Define Vxa(Vya)1,Vxb(Vyb)2,Vxc(Vyc)3,Vxd(Vyd)4.
@@ -163,35 +162,37 @@ for t = 1:Nt
     WXYCW = zeros(Ny,Nx);
     % Interpolate vx,vy and xyx from nodes to markers.
     for m=1:1:marknum
-        j=fix((xm(m)-x(1))/dx)+1;
-        i=fix((ym(m)-y(1))/dy)+1;
-        if(j<1)
-            j=1;
-        elseif(j>Nx-1)
-            j=Nx-1;
-        end
-        if(i<1)
-            i=1;
-        elseif(i>Ny-1)
-            i=Ny-1;
-        end
-        % Compute distances
-        dis_x = xm(m)-x(j);
-        dis_y = ym(m)-y(i);
-        wtmij = (1-dis_x/dx)*(1-dis_y/dy);
-        wtmi1j = (dis_x/dx)*(1-dis_y/dy);
-        wtmij1 = (1-dis_x/dx)*(dis_y/dy);
-        wtmi1j1 = (dis_x/dx)*(dis_y/dy);
-        vym(m)=vy(i,j)*wtmij+vy(i+1,j)*wtmi1j+...
-               vy(i,j+1)*wtmij1+vy(i+1,j+1)*wtmi1j1;
-        vxm(m)=vx(i,j)*wtmij+vx(i+1,j)*wtmi1j+...
-               vx(i,j+1)*wtmij1+vx(i+1,j+1)*wtmi1j1;
-        wyxm(m)=wyx(i,j)*wtmij+wyx(i+1,j)*wtmi1j+...
-               wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
-    end
-    
-    % Computing stress rotation for every markers.
-    for m = 1:marknum
+        if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 <= 0.5^2)
+            j=fix((xm(m)-x(1))/dx)+1;
+            i=fix((ym(m)-y(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx-1)
+                j=Nx-1;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny-1)
+                i=Ny-1;
+            end
+            % Compute distances
+            dis_x = xm(m)-x(j);
+            dis_y = ym(m)-y(i);
+            wtmij = (1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j = (dis_x/dx)*(1-dis_y/dy);
+            wtmij1 = (1-dis_x/dx)*(dis_y/dy);
+            wtmi1j1 = (dis_x/dx)*(dis_y/dy);
+            vym(m)=vy(i,j)*wtmij+vy(i+1,j)*wtmi1j+...
+                vy(i,j+1)*wtmij1+vy(i+1,j+1)*wtmi1j1;
+            vxm(m)=vx(i,j)*wtmij+vx(i+1,j)*wtmi1j+...
+                vx(i,j+1)*wtmij1+vx(i+1,j+1)*wtmi1j1;
+            wyxm(m)=wyx(i,j)*wtmij+wyx(i+1,j)*wtmi1j+...
+                wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
+%         end
+%     end
+%     
+%     % Computing stress rotation for every markers.
+%     for m = 1:marknum
         sxy = sxyCm(m,t);
         sxx = sxxCm(m,t);
         syy = syyCm(m,t);
@@ -220,12 +221,13 @@ for t = 1:Nt
         sxxCm(m,t+1) = (1/6)*(sxxCrk(1)+2*sxxCrk(2)+2*sxxCrk(3)+sxxCrk(4))*dt+sxxCm(m,t);
         syyCm(m,t+1) = (1/6)*(syyCrk(1)+2*syyCrk(2)+2*syyCrk(3)+syyCrk(4))*dt+syyCm(m,t);
         sxyCm(m,t+1) = (1/6)*(sxyCrk(1)+2*sxyCrk(2)+2*sxyCrk(3)+sxyCrk(4))*dt+sxyCm(m,t);
-    end
-    % Marker transport by method of RUNGE-KUTTA 
-    % Interpolate vx and vy components from E-nodes to L-markers.
-    for m=1:1:marknum
-        % Check if marker within the movable range.
-        if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 <= 0.5^2)
+%     end
+%     end
+%     % Marker transport by method of RUNGE-KUTTA 
+%     % Interpolate vx and vy components from E-nodes to L-markers.
+%     for m=1:1:marknum
+%         % Check if marker within the movable range.
+%         if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 <= 0.5^2)
             % Reserve original coordinate.
             xa = xm(m);
             ya = ym(m);
@@ -338,11 +340,12 @@ for t = 1:Nt
         end
     end
     % Monitor the 10th point.
-    xcoor(t) = xm(20100);
-    stressxx(t) =  sxxCm(20,t);
+    xcoor(t+1) = xm(20434);
+    stressxx(t) =  sxxCm(20434,t);
 end
 figure(1);
 subplot(2,1,1);
+% plot(xcoor(1:Nt-1)-xcoor(1));
 plot(xcoor(1:Nt-1));
 xlabel('T')
 ylabel('xcoor')
