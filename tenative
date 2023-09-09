@@ -1,0 +1,370 @@
+clear all;clf;
+% Set parameters
+w =1;
+MAXt = 2*pi/w;
+Nt = 101;
+dt = MAXt/(Nt-1);
+
+output_interval = 1;
+Lx = 1; % m
+Ly = 1;
+Nx = 51; 
+Ny = 51; 
+Nx1 = Nx+1;
+Ny1 = Ny+1;
+dx = Lx / (Nx-1);
+dy = Ly / (Ny-1);
+% Basic E-nodes.
+x = 0:dx:Lx;
+y = 0:dy:Ly;
+% Vx staggered nodes.(Nx_node * Ny_node+1)
+xvx = 0:dx:Lx;
+yvx = -dy/2 : dy : Ly+dy/2;
+% Vy staggered nodes.(Nx_node+1 * Ny_node)
+xvy = -dx/2 : dx : Lx+dx/2;
+yvy = 0:dy:Ly;
+% P staggered nodes.(Nx_node+1 * Ny_node+1)
+xp = -dx/2 : dx : Lx+dx/2;
+yp = -dy/2 : dy : Ly+dy/2;
+
+pvx = zeros(Ny1,Nx1);
+pvy = zeros(Ny1,Nx1);
+vxp=zeros(Ny1,Nx1); 
+vyp=zeros(Ny1,Nx1);
+p_matrix = zeros(Ny1,Nx1);
+g_y = 10;
+ETA = zeros(Ny,Nx);%density
+RHO = zeros(Ny,Nx);%viscosity
+% Amount of markers.
+num_per_cell = 4;
+Nx_marker = (Nx-1)*num_per_cell;
+Ny_marker = (Ny-1)*num_per_cell;
+marknum=Nx_marker*Ny_marker;
+% Step-length among L-marker points
+x_m_step = Lx/Nx_marker;
+y_m_step = Ly/Ny_marker;
+% Marker points.
+xm=zeros(1,marknum); % Horizontal coordinates, m
+ym=zeros(1,marknum);
+rhom=zeros(1,marknum); % Density, kg/m^3
+etam=zeros(1,marknum);
+[X,Y] = meshgrid( x_m_step/2:x_m_step:Lx - x_m_step/2 , y_m_step/2:y_m_step:Ly - y_m_step/2 );
+vis_marker = zeros(Ny_marker,Nx_marker);
+den_marker = zeros(Ny_marker,Nx_marker);
+den_plume = 3200;
+radius = 100000;
+den_mantle = 3300;
+xmid = Lx/2;
+ymid = Ly/2;
+% Define a rotational velocity around the model centre.
+% VX NODE:Nx,Ny1
+% VY NODE:Nx1,Ny
+vx = zeros(Ny1,Nx);
+vy = zeros(Ny,Nx1);
+for j = 1:Nx
+    for i = 1:Ny1
+    	vx(i,j) = w*(0.5-yvx(i));
+    end
+end
+for j = 1:Nx1
+    for i = 1:Ny
+        vy(i,j) = w*(xvy(j)-0.5);
+    end
+end
+% Computing average velocity components at cell centres.
+for j = 1:Nx1
+    for i = 1:Ny1
+        %  Computing internal Vx and Vy at the P nodes.
+        if (j~=1 && i ~=1 && j~=Nx1 && i~=Ny1)
+            % Vx at internal nodes.
+            pvx(i,j) = ( vx(i,j) + vx(i,j-1) )./2;
+            % Vy at internal nodes.
+            pvy(i,j) = ( vy(i,j) + vy(i-1,j) )./2;
+        end
+    end
+end
+% Applying free-slip boundary condition for velocity in the P nodes .
+for j = 1:Nx1
+    for i = 1:Ny1
+        if ( i==1 || i==Ny )
+            % Top and Bottom
+            % Vx
+            if(j>1 && j<Nx1)
+                pvx(i,j) = pvx(i+1,j);
+            end
+            % Vy
+            pvy(i,j) = pvy(i+1,j);
+        end
+        if (j==1 || j==Nx)
+            % Right and Left
+            % Vy
+            if(i>1 && i< Ny1)
+                pvy(i,j) = pvy(i,j+1);
+            end
+            % Vx
+            pvx(i,j) = pvx(i,j+1);
+        end
+    end
+end
+
+
+% Computing wyx for basic nodals points using finite differences.
+wyx = zeros(Ny,Nx);
+wyxm = zeros(Ny_marker*Nx_marker,1);
+for j = 1:Nx
+    for i = 1:Ny
+        wyx(i,j) = (1/2)*((vy(i,j+1)-vy(i,j))/dx - (vx(i+1,j)-vx(i,j))/dy) ;
+    end
+end
+wxz = 0;
+wzx = 0;
+wyz = 0;
+wzy = 0;
+% Below line is uesd in RK process
+% wxy = -wyx
+
+% Initialize devatoric stress.
+% C:Fourth-order Runge-Kutta formula.
+% L-marker
+sxyCm = zeros(Ny_marker*Nx_marker,Nt);
+sxxCm = zeros(Ny_marker*Nx_marker,Nt);
+syyCm = zeros(Ny_marker*Nx_marker,Nt);
+sxzCm = zeros(Ny_marker*Nx_marker,Nt);
+syzCm = zeros(Ny_marker*Nx_marker,Nt);
+szzCm = zeros(Ny_marker*Nx_marker,Nt);
+vxm = zeros(Ny_marker*Nx_marker,1);
+vym = zeros(Ny_marker*Nx_marker,1);
+
+m=1;
+for jm = 1:Nx_marker
+    for im = 1:Ny_marker
+        % Define marker coordinates
+        xm(m)=x_m_step/2+(jm-1)*x_m_step+(rand-0.5)*x_m_step;
+        ym(m)=y_m_step/2+(im-1)*y_m_step+(rand-0.5)*y_m_step;
+        % Marker properties
+        sxyCm(m,1) = 0;
+        sxxCm(m,1) = 10^6;
+        syyCm(m,1) = -10^6;
+        sxzCm(m,1) = 0;
+        syzCm(m,1) = 0;
+        szzCm(m,1) = 0;
+        m = m+1;
+    end
+end
+
+xcoor = zeros(Nt,1);
+stressxx = zeros(Nt,1);
+for t = 1:Nt
+    % Define Vxa(Vya)1,Vxb(Vyb)2,Vxc(Vyc)3,Vxd(Vyd)4.
+    vxm=zeros(4,1);
+    vym=zeros(4,1);
+    % BASCI NODE
+    WBASIC_NODE = zeros(Ny,Nx);
+    WXYCW = zeros(Ny,Nx);
+    % Interpolate vx,vy and xyx from nodes to markers.
+    for m=1:1:marknum
+        j=fix((xm(m)-x(1))/dx)+1;
+        i=fix((ym(m)-y(1))/dy)+1;
+        if(j<1)
+            j=1;
+        elseif(j>Nx-1)
+            j=Nx-1;
+        end
+        if(i<1)
+            i=1;
+        elseif(i>Ny-1)
+            i=Ny-1;
+        end
+        % Compute distances
+        dis_x = xm(m)-x(j);
+        dis_y = ym(m)-y(i);
+        wtmij = (1-dis_x/dx)*(1-dis_y/dy);
+        wtmi1j = (dis_x/dx)*(1-dis_y/dy);
+        wtmij1 = (1-dis_x/dx)*(dis_y/dy);
+        wtmi1j1 = (dis_x/dx)*(dis_y/dy);
+        vym(m)=vy(i,j)*wtmij+vy(i+1,j)*wtmi1j+...
+               vy(i,j+1)*wtmij1+vy(i+1,j+1)*wtmi1j1;
+        vxm(m)=vx(i,j)*wtmij+vx(i+1,j)*wtmi1j+...
+               vx(i,j+1)*wtmij1+vx(i+1,j+1)*wtmi1j1;
+        wyxm(m)=wyx(i,j)*wtmij+wyx(i+1,j)*wtmi1j+...
+               wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
+    end
+    
+    % Computing stress rotation for every markers.
+    for m = 1:marknum
+        sxy = sxyCm(m,t);
+        sxx = sxxCm(m,t);
+        syy = syyCm(m,t);
+        sxz = sxzCm(m,t);
+        syz = syzCm(m,t);
+        szz = szzCm(m,t);
+        sxxCrk = zeros(1,4);
+        syyCrk = zeros(1,4);
+        sxyCrk = zeros(1,4);
+        for rk = 1:1:4
+            % wxym = -wyxm.This condition is uesd in below line.
+            sxxCrk(rk) = 2*sxy*(-wyxm(m)) + 2*sxz*wxz;
+            syyCrk(rk) = 2*sxy*wyxm(m) + 2*syz*wyz;
+            sxyCrk(rk) = (sxx-syy)*wyxm(m) + wxz*syz - sxz*wzy;
+            if(rk == 1 || rk == 2)
+                % You can undestand dt/2 or dt as weight.
+                sxy = sxyCm(m,t) + sxyCrk(rk)*dt/2;
+                sxx = sxxCm(m,t) + sxxCrk(rk)*dt/2;
+                syy = syyCm(m,t) + syyCrk(rk)*dt/2;
+            elseif(rk == 3)
+                sxy = sxyCm(m,t) + sxyCrk(rk)*dt;
+                sxx = sxxCm(m,t) + sxxCrk(rk)*dt;
+                syy = syyCm(m,t) + syyCrk(rk)*dt;
+            end
+        end
+        sxxCm(m,t+1) = (1/6)*(sxxCrk(1)+2*sxxCrk(2)+2*sxxCrk(3)+sxxCrk(4))*dt+sxxCm(m,t);
+        syyCm(m,t+1) = (1/6)*(syyCrk(1)+2*syyCrk(2)+2*syyCrk(3)+syyCrk(4))*dt+syyCm(m,t);
+        sxyCm(m,t+1) = (1/6)*(sxyCrk(1)+2*sxyCrk(2)+2*sxyCrk(3)+sxyCrk(4))*dt+sxyCm(m,t);
+    end
+    % Marker transport by method of RUNGE-KUTTA 
+    % Interpolate vx and vy components from E-nodes to L-markers.
+    for m=1:1:marknum
+        % Check if marker within the movable range.
+        if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 <= 0.5^2)
+            % Reserve original coordinate.
+            xa = xm(m);
+            ya = ym(m);
+            for rk = 1:1:4
+                % Interpolate vx from P-staggered nodes to L-markers.
+                % P staggered nodes.(Nx_node+1 * Ny_node+1)
+                j=fix((xm(m)-xp(1))/dx)+1;
+                i=fix((ym(m)-yp(1))/dy)+1;
+                if(j<1)
+                    j=1;
+                elseif(j>Nx-1)
+                    j=Nx-1;
+                end
+                % Vx staggered nodes.(Nx_node * Ny_node+1)
+                if(i<1)
+                    i=1;
+                elseif(i>Ny)
+                    i=Ny;
+                end
+                % Compute distances
+                dis_x=xm(m)-xp(j);
+                dis_y=ym(m)-yp(i);
+                % Compute weights
+                wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+                wtmi1j=(dis_x/dx)*(1-dis_y/dy);
+                wtmij1=(1-dis_x/dx)*(dis_y/dy);
+                wtmi1j1=(dis_x/dx)*(dis_y/dy);
+                % Compute vx velocity
+                vxm(rk) = pvx(i,j)*wtmij+pvx(i+1,j)*wtmi1j...
+                    +pvx(i,j+1)*wtmij1+pvx(i+1,j+1)*wtmi1j1;
+                vym(rk) = pvy(i,j)*wtmij+pvy(i+1,j)*wtmi1j...
+                    +pvy(i,j+1)*wtmij1+pvy(i+1,j+1)*wtmi1j1;
+                % Interpolate vx from Vx-staggered nodes to L-markers.
+                % Define i,j indexes for the upper left node
+                j=fix((xm(m)-xvx(1))/dx)+1;
+                i=fix((ym(m)-yvx(1))/dy)+1;
+                if(j<1)
+                    j=1;
+                elseif(j>Nx-1)
+                    j=Nx-1;
+                end
+                % Vx staggered nodes.(Nx_node * Ny_node+1)
+                if(i<1)
+                    i=1;
+                elseif(i>Ny)
+                    i=Ny;
+                end
+                % Compute distances
+                dis_x=xm(m)-xvx(j);
+                dis_y=ym(m)-yvx(i);
+                % Compute weights
+                wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+                wtmi1j=(dis_x/dx)*(1-dis_y/dy);
+                wtmij1=(1-dis_x/dx)*(dis_y/dy);
+                wtmi1j1=(dis_x/dx)*(dis_y/dy);
+                % Compute vx velocity
+                vxcij = (1/3)*(2*vx(i,j));
+                vxci1j = (1/3)*(2*vx(i+1,j));
+                vxcij1 = (1/3)*(2*vx(i,j+1));
+                vxci1j1 = (1/3)*(2*vx(i+1,j+1));
+                vxm(rk) = (1/3)*vxm(rk) + (vxcij*wtmij+vxci1j*wtmi1j...
+                    +vxcij1*wtmij1+vxci1j1*wtmi1j1);
+                
+                % Interpolate vy
+                % Define i,j indexes for the upper left node
+                j=fix((xm(m)-xvy(1))/dx)+1;
+                i=fix((ym(m)-yvy(1))/dy)+1;
+                if(j<1)
+                    j=1;
+                elseif(j>Nx)
+                    j=Nx;
+                end
+                if(i<1)
+                    i=1;
+                elseif(i>Ny-1)
+                    i=Ny-1;
+                end
+                % Compute distances
+                dis_x=xm(m)-xvy(j);
+                dis_y=ym(m)-yvy(i);
+                % Compute weights
+                wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+                wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+                wtmij1=(dis_x/dx)*(1-dis_y/dy);
+                wtmi1j1=(dis_x/dx)*(dis_y/dy);
+                % Compute vx velocity
+                vycij = (1/3)*(2*vy(i,j));
+                vyci1j = (1/3)*(2*vy(i+1,j));
+                vycij1 = (1/3)*(2*vy(i,j+1));
+                vyci1j1 = (1/3)*(2*vy(i+1,j+1));
+                vym(rk) = (1/3)*vym(rk) + (vycij*wtmij+vyci1j*wtmi1j...
+                    +vycij1*wtmij1+vyci1j1*wtmi1j1);
+                
+                if(rk == 1 || rk == 2)
+                    xm(m) = vx(rk)*dt/2 + xa;
+                    ym(m) = vy(rk)*dt/2 + ya;
+                elseif(rk == 3)
+                    xm(m) = vx(rk)*dt + xa;
+                    ym(m) = vy(rk)*dt + ya;
+                end
+            end
+            % Return original coordinate.
+            xm(m) = xa;
+            ym(m) = ya;
+            % Move markers
+            vxefft = (1/6)*(vxm(1)+2*vxm(2)+2*vxm(3)+vxm(4));
+            vyefft = (1/6)*(vym(1)+2*vym(2)+2*vym(3)+vym(4));
+            xm(m)=xm(m)+dt*vxefft;
+            ym(m)=ym(m)+dt*vyefft;
+        end
+    end
+    % Monitor the 10th point.
+    xcoor(t) = xm(20100);
+    stressxx(t) =  sxxCm(20,t);
+end
+figure(1);
+subplot(2,1,1);
+plot(xcoor(1:Nt-1));
+xlabel('T')
+ylabel('xcoor')
+subplot(2,1,2);
+plot(stressxx(1:Nt-1));
+xlabel('T');
+ylabel('stress');
+
+
+figure(2);
+subplot(1,2,1);
+quiver(xp,yp,pvx,pvy,'k');
+xlabel('Horizontal(m)')
+ylabel('Vertical(m)')
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading interp;
+subplot(1,2,2);
+mesh(wyx(1:Ny-1,1:Nx-1));
+xlabel('Horizontal(m)')
+ylabel('Vertical(m)')
+set(gca,'xaxislocation','top');
+set (gca,'YDir','reverse')
+shading interp;
+colorbar;
