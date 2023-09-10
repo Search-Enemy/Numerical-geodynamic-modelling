@@ -1,3 +1,5 @@
+% Exercise 12.6
+% Note Line-193
 clear all;clf;
 % Set parameters
 w =1;
@@ -188,12 +190,13 @@ for t = 1:Nt
     % BASCI NODE
     WBASIC_NODE = zeros(Ny,Nx);
     WXYCW = zeros(Ny,Nx);
-    % Interpolate vx,vy and xyx from nodes to markers.
+    % This matrix shold update at every time instead of m.
     if(method==4)
         SIGMAROTATED = Rmat*SIGMAROTATED*Rmat';
     end
     for m=1:1:marknum
         if ((xm(m)-xmid)^2+(ym(m)-ymid)^2 < 0.5^2)
+            % Interpolate vx,vy and xyx from nodes to markers.
             j=fix((xm(m)-x(1))/dx)+1;
             i=fix((ym(m)-y(1))/dy)+1;
             if(j<1)
