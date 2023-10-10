@@ -148,7 +148,7 @@ dxymax   = 0.001;
 % Define dt for stokes equation.
 dt = 0.5e+8; % initial timestep
 timesum = 0;
-Nt = 300;
+Nt = 400;
 YIELDERR=zeros(1,Nt); % Yielding error of markers
 minetavpm = 1e17;
 maxetavpm = 1e23;
@@ -908,8 +908,8 @@ sxym00=sxym;
         wtmij1=(dis_x/dx)*(1-dis_y/dy);
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-        dsxxmremain=DSXX(i,j)*wtmij + DSXX(i+1,j)*wtmi1j  ...
-            +DSXX(i,j+1)*wtmij1 + DSXX(i+1,j+1)*wtmi1j1;
+        dsxxmremain= DSXX(i,j)  *wtmij  + DSXX(i+1,j)   *wtmi1j  ...
+                   + DSXX(i,j+1)*wtmij1 + DSXX(i+1,j+1) *wtmi1j1;
         % "NOTE THAT" this discard interpolation of new stress SXX. 
         sxxm(m) = sxxm(m) + dsxxmremain;
         % Define i,j indexes for the upper left node
@@ -934,26 +934,26 @@ sxym00=sxym;
         wtmij1=(dis_x/dx)*(1-dis_y/dy);
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-        dsxymremain=DSXY(i,j)*wtmij + DSXY(i+1,j)*wtmi1j  ...
-            +DSXY(i,j+1)*wtmij1 + DSXY(i+1,j+1)*wtmi1j1;
+        dsxymremain=DSXY(i,j)  *wtmij  + DSXY(i+1,j)  *wtmi1j  ...
+                   +DSXY(i,j+1)*wtmij1 + DSXY(i+1,j+1)*wtmi1j1;
         % Tcorrected = Tm0(Tm0+ dTsubgrid) + dTremain
         % Eq.10.19
         sxym(m) = sxym(m) + dsxymremain;
     end
     
     Hsij = zeros(Ny1,Nx1);
-    for j = 2:Nx
-        for i = 2:Ny   
+    for j = 2:1:Nx
+        for i = 2:1:Ny   
             pxyxy = (1/4)*( SXY(i,j)^2/ETAVP(i,j)   + SXY(i-1,j)^2/ETAVP(i-1,j)...
-                               + SXY(i,j-1)/ETAVP(i,j-1) + SXY(i-1,j-1)/ETAVP(i-1,j-1));
+                          + SXY(i,j-1)/ETAVP(i,j-1) + SXY(i-1,j-1)/ETAVP(i-1,j-1));
             % Shear heating Hs
             Hsij(i,j) = SXX(i,j)^2/ETAPVP(i,j)+ pxyxy;
         end
     end
     Haij = zeros(Ny1,Nx1);
     % Adiabatic heating Ha
-    for j = 2:Nx1
-        for i = 2:Ny1
+    for j = 2:1:Nx
+        for i = 2:1:Ny
             kvy = ( vy(i,j)+vy(i-1,j) )/2;
             kvx = ( vx(i,j)+vx(i,j-1) )/2;
             Haij(i,j) = T0(i,j)*Aefij(i,j)*RHOP(i,j)*(gy*kvy+gx*kvx);
@@ -975,26 +975,26 @@ sxym00=sxym;
                 % External points
                 if(i==1 || i==Ny1 || j==1 || j==Nx1)
                     % Boundary Condition
-                    % Top BC: T=273
+                    % Top BC: i
                     if(i==1 && j>1 && j<Nx1)
                         coet(kt,kt) = 1;
                         coet(kt,kt)=1; % Left part
                         coet(kt,kt+1)=-1; % Left part
                         bt(kt)=0; % Right part
                     end
-                    % Bottom BC: T=1500
+                    % Bottom BC: i
                     if(i==Ny1 && j>1 && j<Nx1)
                         coet(kt,kt)=1; % Left part
                         coet(kt,kt-1)=-1; % Left part
                         bt(kt)=0; % Right part
                     end
-                    % Left BC: dT/dx=0
+                    % Left BC: i
                     if(j==1)
                         coet(kt,kt)=1; % Left part
                         coet(kt,kt+Ny1)=-1; % Left part
                         bt(kt)=0; % Right part
                     end
-                    % Right BC: dT/dx=0
+                    % Right BC: i
                     if(j==Nx1)
                         coet(kt,kt)=1; % Left part
                         coet(kt,kt-Ny1)=-1; % Left part
@@ -1010,7 +1010,7 @@ sxym00=sxym;
                     kvi1j = KVY(i-1,j);
                     % Not 2* why?? page177
                     coet(kt, kt) = (khij+khij1)/dx^2+RHOPCP(i,j)/dtT...
-                        +(kvij+kvi1j)/dy^2;% middle T3 i,j
+                                  +(kvij+kvi1j)/dy^2;% middle T3 i,j
                     coet(kt, kt-1) = -(kvi1j)/(2.*dy.^2); % up T2 i-1,j
                     coet(kt, kt+1) = -(kvij)/(2.*dy.^2); % down T4 i+1,j
                     coet(kt, kt-Ny1) = -(khij1)/(dx.^2); % left T1 i,j-1
@@ -1507,8 +1507,11 @@ sxym00=sxym;
         xm(m)=xm(m)+dtm*vxefft;
         ym(m)=ym(m)+dtm*vyefft;
     end
+    % Sum of time.
+    timesum=timesum+dtm;
+    % Figure at every 20 timesteps.
     if(t==1 || fix(t/20)*20==t)
-        timesum=timesum+dtm;
+
         figure(1);
         % Figure
         subplot(1,3,1);
@@ -1551,15 +1554,18 @@ sxym00=sxym;
         
         figure(2);
         plot(YIELDERR,'k','LineWidth',3);
+        title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        
         figure(3);colormap('Jet');
         pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
         shading flat;
         axis ij image;
         colorbar
         title(['log10ETA, Pa*s timestep=',num2str(t),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        % Save figure
+        namefig=['Vep_' num2str(t)];
+        print ('-djpeg', '-r150',namefig);
         
         pause(0.1);
-        
     end
-    
 end
