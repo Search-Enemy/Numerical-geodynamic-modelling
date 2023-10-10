@@ -19,11 +19,11 @@ dy = Ly / (Ny-1);
 x = 0:dx:Lx;
 y = 0:dy:Ly;
 % Vx staggered nodes.(Nx_node * Ny_node+1)
-xvx = 0:dx:Lx;
+xvx = 0:dx:Lx+dx;
 yvx = -dy/2 : dy : Ly+dy/2;
 % Vy staggered nodes.(Nx_node+1 * Ny_node)
 xvy = -dx/2 : dx : Lx+dx/2;
-yvy = 0:dy:Ly;
+yvy = 0:dy:Ly+dy;
 % P staggered nodes.(Nx_node+1 * Ny_node+1)
 xp = -dx/2 : dx : Lx+dx/2;
 yp = -dy/2 : dy : Ly+dy/2;
@@ -103,9 +103,7 @@ for jm=1:1:Nxm
         ym(m)=dym/2+(im-1)*dym+(rand-0.5)*dym;
         % Marker properties
         % "Strong Block(Mantle)" 
-        if(ym(m)>=0.2*Ly && ym(m)<=0.8*Ly)
-            tm(m) = 1;
-        end
+        tm(m) = 1;
         % "Squared inclusion(plume)"
         if(abs(xm(m)-x_mid)<5000 && abs(ym(m)-y_mid)<5000)
             tm(m) = 2;
@@ -144,14 +142,15 @@ vxright  = -5e-9;
 vytop    = -5e-9;
 vybottom = 5e-9;
 
-dxymax   = 0.001;    
+ 
 % Define dt for stokes equation.
 dt = 0.5e+8; % initial timestep
+dxymax   = 0.001;   
 timesum = 0;
 Nt = 400;
 YIELDERR=zeros(1,Nt); % Yielding error of markers
-minetavpm = 1e17;
-maxetavpm = 1e23;
+minetavpm = 1e+17;
+maxetavpm = 1e+23;
 DTmax=20; % max temperature change per time step, K
 subgrdifcoes = 0;
 subgrdifcoet = 0;
@@ -977,7 +976,6 @@ sxym00=sxym;
                     % Boundary Condition
                     % Top BC: i
                     if(i==1 && j>1 && j<Nx1)
-                        coet(kt,kt) = 1;
                         coet(kt,kt)=1; % Left part
                         coet(kt,kt+1)=-1; % Left part
                         bt(kt)=0; % Right part
@@ -1563,7 +1561,7 @@ sxym00=sxym;
         title(['log10ETA, Pa*s timestep=',num2str(t),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
         
         % Save figure
-        namefig=['Vep_' num2str(t)];
+        namefig=['Vepmy_' num2str(t)];
         print ('-djpeg', '-r150',namefig);
         
         pause(0.1);
