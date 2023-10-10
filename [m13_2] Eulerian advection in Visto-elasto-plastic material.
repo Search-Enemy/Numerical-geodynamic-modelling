@@ -1,5 +1,6 @@
 %This program complished the process of 2D Eulerian advection with method
 %of MIC(allocating memory temporarily) in vistoelatoplastic material.
+% "NOTE" line 23,line 107 !!!
 clear all;clf;
 % Set parameters
 % Length of model
@@ -419,6 +420,7 @@ sxym00=sxym;
             end
         end
     end
+    % Computing properities at P-node
     for j = 1:1:Nx1
         for i = 1:1:Ny1
             if(WTPSUM(i,j)>0)
@@ -705,184 +707,184 @@ sxym00=sxym;
     end
         
     % Computing "STRESS" subgrid diffusion for markers
-%     if (subgrdifcoes>0)
-%         % Existence of subgrid diffusion.
-%         % Page162 How to correct the problem ?
-%         % operating  consistent subgrid diffusion .
-%         % Clear subgrid temperature changes(dTijsub) for nodes
-%         % P-NODES
-%         WPNODES = zeros(Ny1,Nx1);
-%         SXXSUM = zeros(Ny1,Nx1);
-%         % Basic-NODES        
-%         WNODES = zeros(Ny,Nx);
-%         SXYSUM = zeros(Ny,Nx);
-%         % Interpolate Tm0(nodal) from E-nodes(T0) to L-markers.
-%         for m = 1:marknum
-%             % Interpolate T to P-NODES(Nx*Ny)
-%             % Define i,j indexes for the upper left node
-%             j=fix((xm(m)-xp(1))/dx)+1;
-%             i=fix((ym(m)-yp(1))/dy)+1;
-%             if(j<1)
-%                 j=1;
-%             elseif(j>Nx)
-%                 j=Nx;
-%             end
-%             if(i<1)
-%                 i=1;
-%             elseif(i>Ny)
-%                 i=Ny;
-%             end
-%             % Compute distances
-%             dis_x=xm(m)-xp(j);
-%             dis_y=ym(m)-yp(i);
-%             % Compute weights
-%             wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j=(1-dis_x/dx)*(dis_y/dy);
-%             wtmij1=(dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j1=(dis_x/dx)*(dis_y/dy);
-%             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-%             sxxm0nodal= sxx(i,j)*wtmij + sxx(i+1,j)*wtmi1j  ...
-%                 +sxx(i,j+1)*wtmij1 + sxx(i+1,j+1)*wtmi1j1;
-%             j=fix((xm(m)-x(1))/dx)+1;
-%             i=fix((ym(m)-y(1))/dy)+1;
-%             if(j<1)
-%                 j=1;
-%             elseif(j>Nx-1)
-%                 j=Nx-1;
-%             end
-%             if(i<1)
-%                 i=1;
-%             elseif(i>Ny-1)
-%                 i=Ny-1;
-%             end
-%             % Compute distances
-%             dis_x=xm(m)-x(j);
-%             dis_y=ym(m)-y(i);
-%             % Compute weights
-%             wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j=(1-dis_x/dx)*(dis_y/dy);
-%             wtmij1=(dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j1=(dis_x/dx)*(dis_y/dy);
-%             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-%             sxym0nodal= sxy(i,j)*wtmij + sxy(i+1,j)*wtmi1j  ...
-%                 +sxy(i,j+1)*wtmij1 + sxy(i+1,j+1)*wtmi1j1;
-%             % NOTE THAT the answer is sxxm(m)-sxxm0nodal.
-%             % Eq.10.14
-%             dsxxm0 = sxxm0nodal - sxxm(m);
-%             dsxym0 = sxym0nodal - sxym(m);
-%             % Page209
-%             tdiff = etam(tm(m))/gggm(tm(m));
-%             % Computing subgrid diffusion
-%             % Why??
-%             % dve = 0;%209,0<dve<1
-%             sdif=-subgrdifcoes*dtm/tdiff;
-%             % Page162 Eq.10.16
-%             dsxxmsub=dsxxm0*(1-exp(sdif));
-%             dsxymsub=dsxym0*(1-exp(sdif));
-% 
-%             % Eq.10.19
-%             % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
-%             sxxm(m) = sxxm(m) + dsxxmsub;
-%             sxym(m) = sxym(m) + dsxymsub;
-%             % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
-%             % Eq.10.17
-%             j=fix((xm(m)-xp(1))/dx)+1;
-%             i=fix((ym(m)-yp(1))/dy)+1;
-%             if(j<1)
-%                 j=1;
-%             elseif(j>Nx)
-%                 j=Nx;
-%             end
-%             if(i<1)
-%                 i=1;
-%             elseif(i>Ny)
-%                 i=Ny;
-%             end
-%             % Compute distances
-%             dis_x=xm(m)-xp(j);
-%             dis_y=ym(m)-yp(i);
-%             % Compute weights
-%             wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j=(1-dis_x/dx)*(dis_y/dy);
-%             wtmij1=(dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j1=(dis_x/dx)*(dis_y/dy);
-%             if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
-%                 SXXSUM(i,j) = SXXSUM(i,j) + dsxxmsub*wtmij;
-%                 WPNODES(i,j) = WPNODES(i,j) + wtmij;
-%             end
-%             if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
-%                 SXXSUM(i+1,j) = SXXSUM(i+1,j) + dsxxmsub*wtmi1j;
-%                 WPNODES(i+1,j) = WPNODES(i+1,j) + wtmi1j;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
-%                 SXXSUM(i,j+1) = SXXSUM(i,j+1) + dsxxmsub*wtmij1;
-%                 WPNODES(i,j+1) = WPNODES(i,j+1) + wtmij1;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
-%                 SXXSUM(i+1,j+1) = SXXSUM(i+1,j+1) + dsxxmsub*wtmi1j1;
-%                 WPNODES(i+1,j+1) = WPNODES(i+1,j+1) + wtmi1j1;
-%             end
-%             % Define i,j indexes for the upper left node
-%             j=fix((xm(m)-x(1))/dx)+1;
-%             i=fix((ym(m)-y(1))/dy)+1;
-%             if(j<1)
-%                 j=1;
-%             elseif(j>Nx-1)
-%                 j=Nx-1;
-%             end
-%             if(i<1)
-%                 i=1;
-%             elseif(i>Ny-1)
-%                 i=Ny-1;
-%             end
-%             % Compute distances
-%             dis_x=xm(m)-x(j);
-%             dis_y=ym(m)-y(i);
-%             % Compute weights
-%             wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j=(1-dis_x/dx)*(dis_y/dy);
-%             wtmij1=(dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j1=(dis_x/dx)*(dis_y/dy);
-%             if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
-%                 SXYSUM(i,j) = SXYSUM(i,j) + dsxymsub*wtmij;
-%                 WNODES(i,j) = WNODES(i,j) + wtmij;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
-%                 SXYSUM(i+1,j) = SXYSUM(i+1,j) + dsxymsub*wtmi1j;
-%                 WNODES(i+1,j) = WNODES(i+1,j) + wtmi1j;
-%             end
-%             if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
-%                 SXYSUM(i,j+1) = SXYSUM(i,j+1) + dsxymsub*wtmij1;
-%                 WNODES(i,j+1) = WNODES(i,j+1) + wtmij1;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
-%                 SXYSUM(i+1,j+1) = SXYSUM(i+1,j+1) + dsxymsub*wtmi1j1;
-%                 WNODES(i+1,j+1) = WNODES(i+1,j+1) + wtmi1j1;
-%             end
-%         end
-%         dsxxijsub = zeros(Ny1,Nx1);
-%         dsxyijsub = zeros(Ny,Nx);
-%         % P-NODES
-%         for j=2:1:Nx
-%             for i=2:1:Ny
-%                 if(WPNODES(i,j)>0)
-%                     dsxxijsub(i,j)=SXXSUM(i,j)/WPNODES(i,j);
-%                 end
-%             end
-%         end
-%         % Basic nodes
-%         for j=1:1:Nx
-%             for i=1:1:Ny
-%                 if(WNODES(i,j)>0)
-%                     dsxyijsub(i,j) = SXYSUM(i,j)/WNODES(i,j);
-%                 end
-%             end
-%         end
-%         % Eq.10.18
-%         % Update dTij(dTij(remain) = dTij - dTij(sub)  )
-%         DSXX = DSXX - dsxxijsub;
-%         DSXY = DSXY - dsxyijsub;
-%     end
+    if (subgrdifcoes>0)
+        % Existence of subgrid diffusion.
+        % Page162 How to correct the problem ?
+        % operating  consistent subgrid diffusion .
+        % Clear subgrid temperature changes(dTijsub) for nodes
+        % P-NODES
+        WPNODES = zeros(Ny1,Nx1);
+        SXXSUM = zeros(Ny1,Nx1);
+        % Basic-NODES        
+        WNODES = zeros(Ny,Nx);
+        SXYSUM = zeros(Ny,Nx);
+        % Interpolate Tm0(nodal) from E-nodes(T0) to L-markers.
+        for m = 1:marknum
+            % Interpolate T to P-NODES(Nx*Ny)
+            % Define i,j indexes for the upper left node
+            j=fix((xm(m)-xp(1))/dx)+1;
+            i=fix((ym(m)-yp(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx)
+                j=Nx;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny)
+                i=Ny;
+            end
+            % Compute distances
+            dis_x=xm(m)-xp(j);
+            dis_y=ym(m)-yp(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+            sxxm0nodal= sxx(i,j)*wtmij + sxx(i+1,j)*wtmi1j  ...
+                +sxx(i,j+1)*wtmij1 + sxx(i+1,j+1)*wtmi1j1;
+            j=fix((xm(m)-x(1))/dx)+1;
+            i=fix((ym(m)-y(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx-1)
+                j=Nx-1;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny-1)
+                i=Ny-1;
+            end
+            % Compute distances
+            dis_x=xm(m)-x(j);
+            dis_y=ym(m)-y(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+            sxym0nodal= sxy(i,j)*wtmij + sxy(i+1,j)*wtmi1j  ...
+                +sxy(i,j+1)*wtmij1 + sxy(i+1,j+1)*wtmi1j1;
+            % NOTE THAT the answer is sxxm(m)-sxxm0nodal.
+            % Eq.10.14
+            dsxxm0 = sxxm0nodal - sxxm(m);
+            dsxym0 = sxym0nodal - sxym(m);
+            % Page209
+            tdiff = etam(tm(m))/gggm(tm(m));
+            % Computing subgrid diffusion
+            % Why??
+            % dve = 0;%209,0<dve<1
+            sdif=-subgrdifcoes*dtm/tdiff;
+            % Page162 Eq.10.16
+            dsxxmsub=dsxxm0*(1-exp(sdif));
+            dsxymsub=dsxym0*(1-exp(sdif));
+
+            % Eq.10.19
+            % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
+            sxxm(m) = sxxm(m) + dsxxmsub;
+            sxym(m) = sxym(m) + dsxymsub;
+            % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
+            % Eq.10.17
+            j=fix((xm(m)-xp(1))/dx)+1;
+            i=fix((ym(m)-yp(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx)
+                j=Nx;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny)
+                i=Ny;
+            end
+            % Compute distances
+            dis_x=xm(m)-xp(j);
+            dis_y=ym(m)-yp(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
+                SXXSUM(i,j) = SXXSUM(i,j) + dsxxmsub*wtmij;
+                WPNODES(i,j) = WPNODES(i,j) + wtmij;
+            end
+            if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
+                SXXSUM(i+1,j) = SXXSUM(i+1,j) + dsxxmsub*wtmi1j;
+                WPNODES(i+1,j) = WPNODES(i+1,j) + wtmi1j;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
+                SXXSUM(i,j+1) = SXXSUM(i,j+1) + dsxxmsub*wtmij1;
+                WPNODES(i,j+1) = WPNODES(i,j+1) + wtmij1;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
+                SXXSUM(i+1,j+1) = SXXSUM(i+1,j+1) + dsxxmsub*wtmi1j1;
+                WPNODES(i+1,j+1) = WPNODES(i+1,j+1) + wtmi1j1;
+            end
+            % Define i,j indexes for the upper left node
+            j=fix((xm(m)-x(1))/dx)+1;
+            i=fix((ym(m)-y(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx-1)
+                j=Nx-1;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny-1)
+                i=Ny-1;
+            end
+            % Compute distances
+            dis_x=xm(m)-x(j);
+            dis_y=ym(m)-y(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
+                SXYSUM(i,j) = SXYSUM(i,j) + dsxymsub*wtmij;
+                WNODES(i,j) = WNODES(i,j) + wtmij;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
+                SXYSUM(i+1,j) = SXYSUM(i+1,j) + dsxymsub*wtmi1j;
+                WNODES(i+1,j) = WNODES(i+1,j) + wtmi1j;
+            end
+            if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
+                SXYSUM(i,j+1) = SXYSUM(i,j+1) + dsxymsub*wtmij1;
+                WNODES(i,j+1) = WNODES(i,j+1) + wtmij1;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
+                SXYSUM(i+1,j+1) = SXYSUM(i+1,j+1) + dsxymsub*wtmi1j1;
+                WNODES(i+1,j+1) = WNODES(i+1,j+1) + wtmi1j1;
+            end
+        end
+        dsxxijsub = zeros(Ny1,Nx1);
+        dsxyijsub = zeros(Ny,Nx);
+        % P-NODES
+        for j=2:1:Nx
+            for i=2:1:Ny
+                if(WPNODES(i,j)>0)
+                    dsxxijsub(i,j)=SXXSUM(i,j)/WPNODES(i,j);
+                end
+            end
+        end
+        % Basic nodes
+        for j=1:1:Nx
+            for i=1:1:Ny
+                if(WNODES(i,j)>0)
+                    dsxyijsub(i,j) = SXYSUM(i,j)/WNODES(i,j);
+                end
+            end
+        end
+        % Eq.10.18
+        % Update dTij(dTij(remain) = dTij - dTij(sub)  )
+        DSXX = DSXX - dsxxijsub;
+        DSXY = DSXY - dsxyijsub;
+    end
     % Interpolate L-markers(dTremain) from P-node(dsxxijremain)
     for m = 1:1:marknum
         % Define i,j indexes for the upper left node
@@ -1020,56 +1022,7 @@ sxym00=sxym;
                 end
             end
         end
-%         for j = 2:Nx
-%             i = 1;
-%             k = (j-1)*Ny1 + i;
-%             % T(1,j) - T(2,j) = 0;
-%             coet(k, k) = 1;
-%             coet(k, k+1) = -1;
-%             bt(k, 1) = 0;
-%             i = Ny1;
-%             k = (j-1)*Ny1 + i;
-%             % T(Ny,j) - T(Ny-1,j) = 0;
-%             coet(k, k) = 1;
-%             coet(k, k-1) = -1;
-%             bt(k, 1) = 0;
-%         end
-%         % left and right
-%         for i = 1:Ny1
-%             j = 1;
-%             k = (j-1)*Ny1 + i;
-%             coet(k, k) = 1;
-%             coet(k, k+Ny1) = -1;
-%             bt(k, 1) = 0;
-%             j = Nx1;
-%             k = (j-1)*Ny1 + i;
-%             coet(k, k) = 1;
-%             coet(k, k-Ny1) = -1;
-%             bt(k, 1) = 0;
-%         end
-% 
-%         % coefficients of interval points
-%         for j = 2:Nx
-%             for i = 2:Ny
-%                 k = (j-1)*Ny1 + i; % k is the index
-%                 % KVX == Kh;KVY == Kv
-%                 khij  = KVX(i,j);
-%                 khij1 = KVX(i,j-1);
-%                 kvij  = KVY(i,j);
-%                 kvi1j = KVY(i-1,j);
-%                 % Not 2* why?? page177
-%                 coet(k, k) = (khij+khij1)/dx^2+RHOPCP(i,j)/dtT...
-%                             +(kvij+kvi1j)/dy^2;% middle T3 i,j
-%                 coet(k, k-1) = -(kvi1j)/(2.*dy.^2); % up T2 i-1,j
-%                 coet(k, k+1) = -(kvij)/(2.*dy.^2); % down T4 i+1,j 
-%                 coet(k, k-Ny1) = -(khij1)/(dx.^2); % left T1 i,j-1
-%                 coet(k, k+Ny1) = -(khij)/(dx.^2); % right T5 i,j+1
-%                 % !!!Note that there are not advection term because MIC have
-%                 % marker transport.!!!
-%                 % Adding H(P-nodes)
-%                 bt(k, 1) = T0(i,j)*RHOPCP(i,j)/dtT + Hrij(i,j) + Haij(i,j) + Hsij(i,j); %- hctdt(i,j)*(vx(i,j)*dtdx+vy(i,j)*dtdy);
-%             end
-%         end
+
         %direct method:right martix is divided by coe martix on the left
         u = coet \ bt;
         % transform vector to grids
@@ -1114,90 +1067,90 @@ sxym00=sxym;
     % "NOTE" that tk0==tk1 in the answer.
     dTij = T1-T0;
     % Computing subgrid diffusion for markers
-%     if (subgrdifcoet>0)
-%         % Existence of subgrid diffusion.
-%         % Page162 How to correct the problem ?
-%         % operating  consistent subgrid diffusion .
-%         % Clear subgrid temperature changes(dTijsub) for nodes
-%         % From marker to P-NODES
-%         WPNODES = zeros(Ny1,Nx1);
-%         WDTM = zeros(Ny1,Nx1);
-%         % Interpolate Tm0(nodal) from E-nodes(T0) to L-markers.
-%         for m = 1:marknum
-%             % Interpolate T to P-NODES(Nx*Ny)
-%             % Define i,j indexes for the upper left node
-%             j=fix((xm(m)-xp(1))/dx)+1;
-%             i=fix((ym(m)-yp(1))/dy)+1;
-%             if(j<1)
-%                 j=1;
-%             elseif(j>Nx)
-%                 j=Nx;
+    if (subgrdifcoet>0)
+        % Existence of subgrid diffusion.
+        % Page162 How to correct the problem ?
+        % operating  consistent subgrid diffusion .
+        % Clear subgrid temperature changes(dTijsub) for nodes
+        % From marker to P-NODES
+        WPNODES = zeros(Ny1,Nx1);
+        WDTM = zeros(Ny1,Nx1);
+        % Interpolate Tm0(nodal) from E-nodes(T0) to L-markers.
+        for m = 1:marknum
+            % Interpolate T to P-NODES(Nx*Ny)
+            % Define i,j indexes for the upper left node
+            j=fix((xm(m)-xp(1))/dx)+1;
+            i=fix((ym(m)-yp(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx)
+                j=Nx;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny)
+                i=Ny;
+            end
+            % Compute distances
+            dis_x=xm(m)-xp(j);
+            dis_y=ym(m)-yp(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+            Tm0nodal= T0(i,j)*wtmij + T0(i+1,j)*wtmi1j  ...
+                +T0(i,j+1)*wtmij1 + T0(i+1,j+1)*wtmi1j1;
+            % Eq.10.14
+            dTm = Tm0nodal - tkm(m);
+            % Page163
+            tdiff = rhocpm(tm(m))/(km(tm(m))*(2/dx^2+2/dy^2));
+            % Computing subgrid diffusion
+            % Why??
+            sdif=-subgrdifcoet*dtm/tdiff;
+            % That's discard below code.
+%             if(sdif<-30)
+%                 sdif=-30;
 %             end
-%             if(i<1)
-%                 i=1;
-%             elseif(i>Ny)
-%                 i=Ny;
-%             end
-%             % Compute distances
-%             dis_x=xm(m)-xp(j);
-%             dis_y=ym(m)-yp(i);
-%             % Compute weights
-%             wtmij=(1-dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j=(1-dis_x/dx)*(dis_y/dy);
-%             wtmij1=(dis_x/dx)*(1-dis_y/dy);
-%             wtmi1j1=(dis_x/dx)*(dis_y/dy);
-%             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-%             Tm0nodal= T0(i,j)*wtmij + T0(i+1,j)*wtmi1j  ...
-%                 +T0(i,j+1)*wtmij1 + T0(i+1,j+1)*wtmi1j1;
-%             % Eq.10.14
-%             dTm = Tm0nodal - tkm(m);
-%             % Page163
-%             tdiff = rhocpm(tm(m))/(km(tm(m))*(2/dx^2+2/dy^2));
-%             % Computing subgrid diffusion
-%             % Why??
-%             sdif=-subgrdifcoet*dtm/tdiff;
-%             % That's discard below code.
-% %             if(sdif<-30)
-% %                 sdif=-30;
-% %             end
-%             % Page162 Eq.10.16
-%             dTmsub=dTm*(1-exp(sdif));
-%             % Eq.10.19
-%             % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
-%             tkm(m) = tkm(m) + dTmsub;
-%             % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
-%             % Eq.10.17
-%             if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
-%                 WDTM(i,j) = WDTM(i,j) + dTmsub*rhocpm(tm(m))*wtmij;
-%                 WPNODES(i,j) = WPNODES(i,j) + rhocpm(tm(m))*wtmij;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
-%                 WDTM(i+1,j) = WDTM(i+1,j) + dTmsub*rhocpm(tm(m))*wtmi1j;
-%                 WPNODES(i+1,j) = WPNODES(i+1,j) + rhocpm(tm(m))*wtmi1j;
-%             end
-%             if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
-%                 WDTM(i,j+1) = WDTM(i,j+1) + dTmsub*rhocpm(tm(m))*wtmij1;
-%                 WPNODES(i,j+1) = WPNODES(i,j+1) + rhocpm(tm(m))*wtmij1;
-%             end
-%             if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
-%                 WDTM(i+1,j+1) = WDTM(i+1,j+1) + dTmsub*rhocpm(tm(m))*wtmi1j1;
-%                 WPNODES(i+1,j+1) = WPNODES(i+1,j+1) + rhocpm(tm(m))*wtmi1j1;
-%             end
-%         end
-%         dTijsub = zeros(Ny1,Nx1);
-%         for j = 1:Nx1
-%             for i = 1:Ny1
-%                 if(WPNODES(i,j)>0)
-%                     % Compting dTijsub
-%                     % Eq.10.17
-%                     dTijsub(i,j) = WDTM(i,j)/WPNODES(i,j);
-%                 end
-%             end
-%         end
-%         % Eq.10.18
-%         % Update dTij(dTij(remain) = dTij - dTijsub)
-%         dTij = dTij - dTijsub;
-%     end
+            % Page162 Eq.10.16
+            dTmsub=dTm*(1-exp(sdif));
+            % Eq.10.19
+            % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
+            tkm(m) = tkm(m) + dTmsub;
+            % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
+            % Eq.10.17
+            if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
+                WDTM(i,j) = WDTM(i,j) + dTmsub*rhocpm(tm(m))*wtmij;
+                WPNODES(i,j) = WPNODES(i,j) + rhocpm(tm(m))*wtmij;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
+                WDTM(i+1,j) = WDTM(i+1,j) + dTmsub*rhocpm(tm(m))*wtmi1j;
+                WPNODES(i+1,j) = WPNODES(i+1,j) + rhocpm(tm(m))*wtmi1j;
+            end
+            if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
+                WDTM(i,j+1) = WDTM(i,j+1) + dTmsub*rhocpm(tm(m))*wtmij1;
+                WPNODES(i,j+1) = WPNODES(i,j+1) + rhocpm(tm(m))*wtmij1;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
+                WDTM(i+1,j+1) = WDTM(i+1,j+1) + dTmsub*rhocpm(tm(m))*wtmi1j1;
+                WPNODES(i+1,j+1) = WPNODES(i+1,j+1) + rhocpm(tm(m))*wtmi1j1;
+            end
+        end
+        dTijsub = zeros(Ny1,Nx1);
+        for j = 1:Nx1
+            for i = 1:Ny1
+                if(WPNODES(i,j)>0)
+                    % Compting dTijsub
+                    % Eq.10.17
+                    dTijsub(i,j) = WDTM(i,j)/WPNODES(i,j);
+                end
+            end
+        end
+        % Eq.10.18
+        % Update dTij(dTij(remain) = dTij - dTijsub)
+        dTij = dTij - dTijsub;
+    end
     % Interpolate L-markers(dTremain) from P-node(dTijremain)
     for m = 1:1:marknum
         % Define i,j indexes for the upper left node
@@ -1508,6 +1461,7 @@ sxym00=sxym;
     timesum=timesum+dtm;
     % Figure at every 20 timesteps.
     if(t==1 || fix(t/20)*20==t)
+        % ETA,Ha and T.
         figure(1);
         % Figure
         subplot(1,3,1);
@@ -1547,11 +1501,11 @@ sxym00=sxym;
         set (gca,'YDir','reverse')
         axis ij image;
         shading interp;
-        
+        % Change of yielderror with time.
         figure(2);
         plot(YIELDERR,'k','LineWidth',3);
         title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
-        
+        % Viscosity distribution plotted on P-node.
         figure(3);
         colormap('Jet');
         pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
