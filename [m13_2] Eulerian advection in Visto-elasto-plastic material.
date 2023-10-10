@@ -132,7 +132,7 @@ coe = sparse(unknowns,unknowns);
 % Define matrix for T
 unknowns = Nx1*Ny1;
 bt = zeros(unknowns,1);
-coet = zeros(unknowns, unknowns);
+coet = sparse(unknowns, unknowns);
  
 % Boundary condition : free slip = -1 ; no slip = 1
 bc_left   = -1;
@@ -420,8 +420,8 @@ sxym00=sxym;
             end
         end
     end
-    for j = 1:Nx1
-        for i = 1:Ny1
+    for j = 1:1:Nx1
+        for i = 1:1:Ny1
             if(WTPSUM(i,j)>0)
                 ETAPVP(i,j) = ETAPSUM(i,j)/WTPSUM(i,j);%etaVP = eta in viscosity-elastic materials.
                 GGGP(i,j) = WTPSUM(i,j)/GGGPSUM(i,j);
@@ -671,8 +671,8 @@ sxym00=sxym;
     SXY = zeros(Ny,Nx);
     DSXY = zeros(Ny,Nx);
     % Computing strain rate(xy) and deviatoric(xy) stress components.
-    for j = 1:Nx
-        for i = 1:Ny
+    for j = 1:1:Nx
+        for i = 1:1:Ny
             %ETAVP = ETA,which plastic is absent.
             EXY(i,j) = (1/2)*( (vx(i+1,j)-vx(i,j))/dy ...
                              + (vy(i,j+1)-vy(i,j))/dx ) ;
@@ -689,8 +689,8 @@ sxym00=sxym;
     SII = zeros(Ny1,Nx1);
     DSXX = zeros(Ny1,Nx1);
     % Computing strain rate(xx) and deviatoric(xx) stress components.
-    for j = 2:Nx
-        for i = 2:Ny        
+    for j = 2:1:Nx
+        for i = 2:1:Ny        
             % Note that exx is not the 1/2 item in the book.
             EXX(i,j) =  (vx(i,j)-vx(i,j-1))/dx;
             % srxx is strain rate,sxx is stressxx
@@ -885,7 +885,7 @@ sxym00=sxym;
 %         DSXY = DSXY - dsxyijsub;
 %     end
     % Interpolate L-markers(dTremain) from P-node(dsxxijremain)
-    for m = 1:marknum
+    for m = 1:1:marknum
         % Define i,j indexes for the upper left node
         j=fix((xm(m)-xp(1))/dx)+1;
         i=fix((ym(m)-yp(1))/dy)+1;
@@ -1077,6 +1077,14 @@ sxym00=sxym;
         % transform vector to grids
         % U has Ny1 rows and Nx1 columns
         U = reshape(u, Ny1, Nx1);
+%         for j=1:1:Nx1
+%             for i=1:1:Ny1
+%                 % Compute global index
+%                 kt=(j-1)*Ny1+i;
+%                 % Reload solution
+%                 T1(i,j)=u(kt);
+%             end
+%         end
         T1 = U;
         % Computing dTi,j = dTi,j(subgrid) + dTi,j(remaining)
         % Eq10.13
@@ -1193,7 +1201,7 @@ sxym00=sxym;
 %         dTij = dTij - dTijsub;
 %     end
     % Interpolate L-markers(dTremain) from P-node(dTijremain)
-    for m = 1:marknum
+    for m = 1:1:marknum
         % Define i,j indexes for the upper left node
         j=fix((xm(m)-xp(1))/dx)+1;
         i=fix((ym(m)-yp(1))/dy)+1;
@@ -1216,15 +1224,15 @@ sxym00=sxym;
         wtmij1=(dis_x/dx)*(1-dis_y/dy);
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-        dTmremain=dTij(i,j)*wtmij + dTij(i+1,j)*wtmi1j  ...
-            +dTij(i,j+1)*wtmij1 + dTij(i+1,j+1)*wtmi1j1;
+        dTmremain=dTij(i,j)  *wtmij  + dTij(i+1,j)  *wtmi1j  ...
+                 +dTij(i,j+1)*wtmij1 + dTij(i+1,j+1)*wtmi1j1;
         % Tcorrected = Tm0(Tm0+ dTsubgrid) + dTremain
         % Eq.10.19            
         tkm(m) = tkm(m) + dTmremain;
         if(t==1)
             % Interpolate new temperature for the 1st timestep
             tkm(m) = T1(i,j)*wtmij + T1(i+1,j)*wtmi1j  ...
-                +T1(i,j+1)*wtmij1 + T1(i+1,j+1)*wtmi1j1;
+                    +T1(i,j+1)*wtmij1 + T1(i+1,j+1)*wtmi1j1;
         end
     end
     
@@ -1233,7 +1241,7 @@ sxym00=sxym;
     % And interpolate srxy from BASIC-NODES to L-markers.
     DSYIELD = 0;
     NMPLAST = 0;
-    for m = 1:marknum
+    for m = 1:1:marknum
         % Define i,j indexes for the upper left node
         j=fix((xm(m)-xp(1))/dx)+1;
         i=fix((ym(m)-yp(1))/dy)+1;
@@ -1256,10 +1264,10 @@ sxym00=sxym;
         wtmij1=(dis_x/dx)*(1-dis_y/dy);
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-        Pm= p(i,j)*wtmij    + p(i+1,j)*wtmi1j  ...
+        Pm =   p(i,j)*wtmij    + p(i+1,j)*wtmi1j  ...
              + p(i,j+1)*wtmij1 + p(i+1,j+1)*wtmi1j1;
-        srxxm= EXX(i,j)*wtmij    + EXX(i+1,j)*wtmi1j  ...
-                + EXX(i,j+1)*wtmij1 + EXX(i+1,j+1)*wtmi1j1;
+        srxxm = EXX(i,j)*wtmij    + EXX(i+1,j)*wtmi1j  ...
+              + EXX(i,j+1)*wtmij1 + EXX(i+1,j+1)*wtmi1j1;
         j=fix((xm(m)-x(1))/dx)+1;
         i=fix((ym(m)-y(1))/dy)+1;
         if(j<1)
@@ -1326,8 +1334,8 @@ sxym00=sxym;
     end
     
     % Computing Vx/Vy at the P-nodes
-    for j = 2:Nx
-        for i = 2:Ny
+    for j = 2:1:Nx
+        for i = 2:1:Ny
             %  Computing internal Vx and Vy at the P nodes.
             % Vx at internal(P) nodes.
             pvx(i,j) = ( vx(i,j) + vx(i,j-1) )./2;
@@ -1355,11 +1363,11 @@ sxym00=sxym;
     pvy(Ny1,:)     =  2*vybottom- pvy(Ny,:);
 
     % Rotate stress by Analytical formulas.
-    for j = 1:Nx
-        for i = 1:Ny
+    for j = 1:1:Nx
+        for i = 1:1:Ny
             % Computing rotation value.
             wyx(i,j) = (1/2)*( (vy(i,j+1)-vy(i,j))/dx ...
-                           - (vx(i+1,j)-vx(i,j))/dy ) ;
+                             - (vx(i+1,j)-vx(i,j))/dy ) ;
         end
     end
 
@@ -1425,10 +1433,10 @@ sxym00=sxym;
             wtmij1=(dis_x/dx)*(1-dis_y/dy);
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             % Compute vxm and vym velocity
-            vxm(rk) = pvx(i,j)*wtmij+pvx(i+1,j)*wtmi1j...
-                     +pvx(i,j+1)*wtmij1+pvx(i+1,j+1)*wtmi1j1;
-            vym(rk) = pvy(i,j)*wtmij+pvy(i+1,j)*wtmi1j...
-                     +pvy(i,j+1)*wtmij1+pvy(i+1,j+1)*wtmi1j1;
+            vxm(rk) = pvx(i,j)*wtmij    + pvx(i+1,j)*wtmi1j...
+                     +pvx(i,j+1)*wtmij1 + pvx(i+1,j+1)*wtmi1j1;
+            vym(rk) = pvy(i,j)*wtmij    + pvy(i+1,j)*wtmi1j...
+                     +pvy(i,j+1)*wtmij1 + pvy(i+1,j+1)*wtmi1j1;
             % Interpolate vx from Vx-staggered nodes to L-markers.
             % Define i,j indexes for the upper left node
             j=fix((xm(m)-xvx(1))/dx)+1;
@@ -1453,13 +1461,8 @@ sxym00=sxym;
             wtmij1=(dis_x/dx)*(1-dis_y/dy);
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             % Compute vx velocity
-            vxcij = (1/3)*(2*vx(i,j));
-            vxci1j = (1/3)*(2*vx(i+1,j));
-            vxcij1 = (1/3)*(2*vx(i,j+1));
-            vxci1j1 = (1/3)*(2*vx(i+1,j+1));
-            vxm(rk) = (1/3)*vxm(rk) + (vxcij*wtmij+vxci1j*wtmi1j...
-                     +vxcij1*wtmij1+vxci1j1*wtmi1j1);
-            
+            vxm(rk) = (1/3)*vxm(rk) + (2/3)*(vx(i,j)*wtmij+vx(i+1,j)*wtmi1j...
+                                           + vx(i,j+1)*wtmij1+vx(i+1,j+1)*wtmi1j1);
             % Interpolate vy
             % Define i,j indexes for the upper left node
             j=fix((xm(m)-xvy(1))/dx)+1;
@@ -1483,12 +1486,8 @@ sxym00=sxym;
             wtmij1=(dis_x/dx)*(1-dis_y/dy);
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             % Compute vx velocity
-            vycij = (1/3)*(2*vy(i,j));
-            vyci1j = (1/3)*(2*vy(i+1,j));
-            vycij1 = (1/3)*(2*vy(i,j+1));
-            vyci1j1 = (1/3)*(2*vy(i+1,j+1));
-            vym(rk) = (1/3)*vym(rk) + (vycij*wtmij+vyci1j*wtmi1j...
-                     +vycij1*wtmij1+vyci1j1*wtmi1j1);
+            vym(rk) = (1/3)*vym(rk) + (2/3)*(vy(i,j)*wtmij+vy(i+1,j)*wtmi1j...
+                     +vy(i,j+1)*wtmij1+vy(i+1,j+1)*wtmi1j1); 
                  
             if(rk == 1 || rk == 2)
                 xm(m) = vxm(rk)*dtm/2 + xa;
@@ -1511,7 +1510,6 @@ sxym00=sxym;
     timesum=timesum+dtm;
     % Figure at every 20 timesteps.
     if(t==1 || fix(t/20)*20==t)
-
         figure(1);
         % Figure
         subplot(1,3,1);
@@ -1556,12 +1554,14 @@ sxym00=sxym;
         plot(YIELDERR,'k','LineWidth',3);
         title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
         
-        figure(3);colormap('Jet');
+        figure(3);
+        colormap('Jet');
         pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
         shading flat;
         axis ij image;
         colorbar
         title(['log10ETA, Pa*s timestep=',num2str(t),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        
         % Save figure
         namefig=['Vep_' num2str(t)];
         print ('-djpeg', '-r150',namefig);
