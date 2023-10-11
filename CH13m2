@@ -1,7 +1,7 @@
 % Solving Stokes, continuity and temperature eq.
 % in primitive variable formulation
 % with variable viscosity and thermal conductivity 
-% for visco-elasticmaterial
+% for visco-elasto-plastic material
 % using FD with staggered grid
 
 % Clearing memory and figures
@@ -26,7 +26,7 @@ gy=0; % Vertical gravity acceleration, m/s^2
 x=0:dx:xsize; % Horizontal coordinates of basic grid points, m
 y=0:dy:ysize; % Vertical coordinates of basic grid points, m
 % Vx-Nodes
-xvx=0:dx:xsize+dx; % Horizontal coordinates of vx grid points, m
+xvx=0:dx:xsize+dy; % Horizontal coordinates of vx grid points, m
 yvx=-dy/2:dy:ysize+dy/2; % Vertical coordinates of vx grid points, m
 % Vy-nodes
 xvy=-dx/2:dx:xsize+dx/2; % Horizontal coordinates of vy grid points, m
@@ -60,10 +60,9 @@ HA=zeros(Ny1,Nx1); % Adiabatic heating, W/m^3
 HS=zeros(Ny1,Nx1); % Shear heating, W/m^3
 ETAP=zeros(Ny1,Nx1); % Viscosity, Pa*s
 GGGP=zeros(Ny1,Nx1); % Shear modulus, Pa
-
-EXX=zeros(Ny1,Nx1); % EPSILONxx, 1/s
-SXX=zeros(Ny1,Nx1); % SIGMA'xx, 1/s
-SXX0=zeros(Ny1,Nx1); % SIGMA0'xx, 1/s
+EXX=zeros(Ny,Nx); % EPSILONxx, 1/s
+SXX=zeros(Ny,Nx); % SIGMA'xx, 1/s
+SXX0=zeros(Ny,Nx); % SIGMA0'xx, 1/s
 tk1=zeros(Ny1,Nx1); % Old temperature, K
 tk2=zeros(Ny1,Nx1); % New temperature, K
 vxp=zeros(Ny1,Nx1); % Vx in pressure nodes, m/s
@@ -97,6 +96,7 @@ frictm = [0.6    0      0     ]; % Friction coefficient
 cohesm = [1e+8   1e+7   1e+7  ]; % Cohesion, Pa
 
 % Define marker coordinates, temperature and material type
+rp=100000; % Plume radius, m
 m=1; % Marker counter
 for jm=1:1:Nxm
     for im=1:1:Nym
@@ -124,7 +124,7 @@ for jm=1:1:Nxm
 end
 
 % Introducing scaled pressure
-pscale=1e+17/dx;
+pscale=1e+21/dx;
 
 % Define global matrixes 
 % Mechanical solution: L(), R()
@@ -158,16 +158,19 @@ dsubgrids=0; % Subgrid stress diffusion parameter
 timesum=0; % Time sum, s
 etamin=1e+17; % Lower viscosity cut-off, Pa s
 etamax=1e+23; % Upper viscosity cut-off, Pa s
-visstep=20; % Periodicity of visualization
+nplast=10; % Number of plastic iterations
+visstep=10; % Periodicity of visualization
 nsteps=400; % number of timesteps
 YIELDERR=zeros(1,nsteps); % Yielding error of markers
 timestep=1;
-
 for timestep=timestep:1:nsteps
 
 % Save old stresses
 sxxm00=sxxm; 
-sxym00=sxym;
+sxym00=sxym;    
+    
+% Plastic iterations
+for iplast=1:1:nplast
 
 % Interpolate properties from markers to nodes
 % Basic nodes
@@ -235,10 +238,10 @@ for m=1:1:marknum
     end
     % i,j+1 Node
     if(dxmj/dx>=0.5 && dymi/dy<=0.5)
-        ETASUM(i,j+1)=ETASUM(i,j+1)+etavpm(m)*wtmij1;
-        GGGSUM(i,j+1)=GGGSUM(i,j+1)+1/gggm(tm(m))*wtmij1;
-        SXYSUM(i,j+1)=SXYSUM(i,j+1)+sxym(m)*wtmij1;
-        WTSUM(i,j+1)=WTSUM(i,j+1)+wtmij1;
+    ETASUM(i,j+1)=ETASUM(i,j+1)+etavpm(m)*wtmij1;
+    GGGSUM(i,j+1)=GGGSUM(i,j+1)+1/gggm(tm(m))*wtmij1;
+    SXYSUM(i,j+1)=SXYSUM(i,j+1)+sxym(m)*wtmij1;
+    WTSUM(i,j+1)=WTSUM(i,j+1)+wtmij1;
     end
     % i+1,j+1 Node
     if(dxmj/dx>=0.5 && dymi/dy>=0.5)
@@ -457,6 +460,7 @@ tk1(:,Nx1)=tk1(:,Nx); % Insulating boundary
 
 
 % Mechanical Solution
+% Recompute viscosity at pressure nodes
 for i=2:1:Ny
     for j=2:1:Nx
         ETAP(i,j)=1/((1/ETA(i-1,j-1)+1/ETA(i,j-1)+1/ETA(i-1,j)+1/ETA(i,j))/4);
@@ -687,7 +691,7 @@ for j=1:1:Nx
     for i=1:1:Ny
         % EXY,SXY, DSXY
         EXY(i,j)=0.5*((vx(i+1,j)-vx(i,j))/dy+...
-                     (vy(i,j+1)-vy(i,j))/dx);
+            (vy(i,j+1)-vy(i,j))/dx);
         SXY(i,j)=2*ETA(i,j)*EXY(i,j)*GGG(i,j)*dtm/(GGG(i,j)*dtm+ETA(i,j))+...
             SXY0(i,j)*ETA(i,j)/(GGG(i,j)*dtm+ETA(i,j));
         DSXY(i,j)=SXY(i,j)-SXY0(i,j);
@@ -720,141 +724,141 @@ end
 DSXX0=DSXX;
 DSXY0=DSXY;
 % Apply subgrid stress diffusion on markers
-% if(dsubgrids>0)
-% SXYSUM=zeros(Ny,Nx);
-% WTSUM=zeros(Ny,Nx);
-% SXXSUM=zeros(Ny1,Nx1);
-% WTPSUM=zeros(Ny1,Nx1);
-% for m=1:1:marknum
-%     % SIGMA'xx
-%     % Define i,j indexes for the upper left node
-%     j=fix((xm(m)-xp(1))/dx)+1;
-%     i=fix((ym(m)-yp(1))/dy)+1;
-%     if(j<1)
-%         j=1;
-%     elseif(j>Nx)
-%         j=Nx;
-%     end
-%     if(i<1)
-%         i=1;
-%     elseif(i>Ny)
-%         i=Ny;
-%     end
-%     % Compute distances
-%     dxmj=xm(m)-xp(j);
-%     dymi=ym(m)-yp(i);
-%     % Compute weights
-%     wtmij=(1-dxmj/dx)*(1-dymi/dy);
-%     wtmi1j=(1-dxmj/dx)*(dymi/dy);    
-%     wtmij1=(dxmj/dx)*(1-dymi/dy);
-%     wtmi1j1=(dxmj/dx)*(dymi/dy);
-%     % Compute marker-node SIGMA'xx difference
-%     dsxxm0=sxxm(m)-(SXX0(i,j)*wtmij+SXX0(i+1,j)*wtmi1j+...
-%             SXX0(i,j+1)*wtmij1+SXX0(i+1,j+1)*wtmi1j1);
-%     % Relax stress difference
-%     dsxxm1=dsxxm0*exp(-dsubgrids*dtm/(etam(tm(m))/gggm(tm(m))));
-%     % Correct marker stress
-%     ddsxxm=dsxxm1-dsxxm0;
-%     sxxm(m)=sxxm(m)+ddsxxm;
-%     % Update subgrid diffusion on nodes
-%     % i,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy<=0.5)
-%     SXXSUM(i,j)=SXXSUM(i,j)+ddsxxm*wtmij;
-%     WTPSUM(i,j)=WTPSUM(i,j)+wtmij;
-%     end
-%     % i+1,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy>=0.5)
-%     SXXSUM(i+1,j)=SXXSUM(i+1,j)+ddsxxm*wtmi1j;
-%     WTPSUM(i+1,j)=WTPSUM(i+1,j)+wtmi1j;
-%     end
-%     % i,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy<=0.5)
-%     SXXSUM(i,j+1)=SXXSUM(i,j+1)+ddsxxm*wtmij1;
-%     WTPSUM(i,j+1)=WTPSUM(i,j+1)+wtmij1;
-%     end
-%     % i+1,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy>=0.5)
-%     SXXSUM(i+1,j+1)=SXXSUM(i+1,j+1)+ddsxxm*wtmi1j1;
-%     WTPSUM(i+1,j+1)=WTPSUM(i+1,j+1)+wtmi1j1;
-%     end
-% 
-%     % SIGMAxy
-%     % Define i,j indexes for the upper left node
-%     j=fix((xm(m)-x(1))/dx)+1;
-%     i=fix((ym(m)-y(1))/dy)+1;
-%     if(j<1)
-%         j=1;
-%     elseif(j>Nx-1)
-%         j=Nx-1;
-%     end
-%     if(i<1)
-%         i=1;
-%     elseif(i>Ny-1)
-%         i=Ny-1;
-%     end
-%     % Compute distances
-%     dxmj=xm(m)-x(j);
-%     dymi=ym(m)-y(i);
-%     % Compute weights
-%     wtmij=(1-dxmj/dx)*(1-dymi/dy);
-%     wtmi1j=(1-dxmj/dx)*(dymi/dy);    
-%     wtmij1=(dxmj/dx)*(1-dymi/dy);
-%     wtmi1j1=(dxmj/dx)*(dymi/dy);
-%     % Compute marker-node SIGMAxy difference
-%     dsxym0=sxym(m)-(SXY0(i,j)*wtmij+SXY0(i+1,j)*wtmi1j+...
-%             SXY0(i,j+1)*wtmij1+SXY0(i+1,j+1)*wtmi1j1);
-%     % Relax stress difference
-%     dsxym1=dsxym0*exp(-dsubgrids*dtm/(etam(tm(m))/gggm(tm(m))));
-%     % Correct marker stress
-%     ddsxym=dsxym1-dsxym0;
-%     sxym(m)=sxym(m)+ddsxym;
-%     % Update subgrid diffusion on nodes
-%     % i,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy<=0.5)
-%     SXYSUM(i,j)=SXYSUM(i,j)+ddsxym*wtmij;
-%     WTSUM(i,j)=WTSUM(i,j)+wtmij;
-%     end
-%     % i+1,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy>=0.5)
-%     SXYSUM(i+1,j)=SXYSUM(i+1,j)+ddsxym*wtmi1j;
-%     WTSUM(i+1,j)=WTSUM(i+1,j)+wtmi1j;
-%     end
-%     % i,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy<=0.5)
-%     SXYSUM(i,j+1)=SXYSUM(i,j+1)+ddsxym*wtmij1;
-%     WTSUM(i,j+1)=WTSUM(i,j+1)+wtmij1;
-%     end
-%     % i+1,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy>=0.5)
-%     SXYSUM(i+1,j+1)=SXYSUM(i+1,j+1)+ddsxym*wtmi1j1;
-%     WTSUM(i+1,j+1)=WTSUM(i+1,j+1)+wtmi1j1;
-%     end
-% end
-% % Compute DSXXsubgrid
-% DSXXsubgrid=zeros(Ny1,Nx1);
-% % P-nodes
-% for j=2:1:Nx
-%     for i=2:1:Ny
-%         if(WTPSUM(i,j)>0)
-%             DSXXsubgrid(i,j)=SXXSUM(i,j)/WTPSUM(i,j);
-%         end
-%     end
-% end
-% % Correct DSXX
-% DSXX=DSXX-DSXXsubgrid;
-% % Compute DSXYsubgrid
-% DSXYsubgrid=zeros(Ny,Nx);
-% % Basic nodes
-% for j=1:1:Nx
-%     for i=1:1:Ny
-%         if(WTSUM(i,j)>0)
-%             DSXYsubgrid(i,j)=SXYSUM(i,j)/WTSUM(i,j);
-%         end
-%     end
-% end
-% % Correct DSXY
-% DSXY=DSXY-DSXYsubgrid;
-% end
+if(dsubgrids>0)
+SXYSUM=zeros(Ny,Nx);
+WTSUM=zeros(Ny,Nx);
+SXXSUM=zeros(Ny1,Nx1);
+WTPSUM=zeros(Ny1,Nx1);
+for m=1:1:marknum
+    % SIGMA'xx
+    % Define i,j indexes for the upper left node
+    j=fix((xm(m)-xp(1))/dx)+1;
+    i=fix((ym(m)-yp(1))/dy)+1;
+    if(j<1)
+        j=1;
+    elseif(j>Nx)
+        j=Nx;
+    end
+    if(i<1)
+        i=1;
+    elseif(i>Ny)
+        i=Ny;
+    end
+    % Compute distances
+    dxmj=xm(m)-xp(j);
+    dymi=ym(m)-yp(i);
+    % Compute weights
+    wtmij=(1-dxmj/dx)*(1-dymi/dy);
+    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
+    wtmij1=(dxmj/dx)*(1-dymi/dy);
+    wtmi1j1=(dxmj/dx)*(dymi/dy);
+    % Compute marker-node SIGMA'xx difference
+    dsxxm0=sxxm(m)-(SXX0(i,j)*wtmij+SXX0(i+1,j)*wtmi1j+...
+            SXX0(i,j+1)*wtmij1+SXX0(i+1,j+1)*wtmi1j1);
+    % Relax stress difference
+    dsxxm1=dsxxm0*exp(-dsubgrids*dtm/(etam(tm(m))/gggm(tm(m))));
+    % Correct marker stress
+    ddsxxm=dsxxm1-dsxxm0;
+    sxxm(m)=sxxm(m)+ddsxxm;
+    % Update subgrid diffusion on nodes
+    % i,j Node
+    if(dxmj/dx<=0.5 && dymi/dy<=0.5)
+    SXXSUM(i,j)=SXXSUM(i,j)+ddsxxm*wtmij;
+    WTPSUM(i,j)=WTPSUM(i,j)+wtmij;
+    end
+    % i+1,j Node
+    if(dxmj/dx<=0.5 && dymi/dy>=0.5)
+    SXXSUM(i+1,j)=SXXSUM(i+1,j)+ddsxxm*wtmi1j;
+    WTPSUM(i+1,j)=WTPSUM(i+1,j)+wtmi1j;
+    end
+    % i,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy<=0.5)
+    SXXSUM(i,j+1)=SXXSUM(i,j+1)+ddsxxm*wtmij1;
+    WTPSUM(i,j+1)=WTPSUM(i,j+1)+wtmij1;
+    end
+    % i+1,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy>=0.5)
+    SXXSUM(i+1,j+1)=SXXSUM(i+1,j+1)+ddsxxm*wtmi1j1;
+    WTPSUM(i+1,j+1)=WTPSUM(i+1,j+1)+wtmi1j1;
+    end
+
+    % SIGMAxy
+    % Define i,j indexes for the upper left node
+    j=fix((xm(m)-x(1))/dx)+1;
+    i=fix((ym(m)-y(1))/dy)+1;
+    if(j<1)
+        j=1;
+    elseif(j>Nx-1)
+        j=Nx-1;
+    end
+    if(i<1)
+        i=1;
+    elseif(i>Ny-1)
+        i=Ny-1;
+    end
+    % Compute distances
+    dxmj=xm(m)-x(j);
+    dymi=ym(m)-y(i);
+    % Compute weights
+    wtmij=(1-dxmj/dx)*(1-dymi/dy);
+    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
+    wtmij1=(dxmj/dx)*(1-dymi/dy);
+    wtmi1j1=(dxmj/dx)*(dymi/dy);
+    % Compute marker-node SIGMAxy difference
+    dsxym0=sxym(m)-(SXY0(i,j)*wtmij+SXY0(i+1,j)*wtmi1j+...
+            SXY0(i,j+1)*wtmij1+SXY0(i+1,j+1)*wtmi1j1);
+    % Relax stress difference
+    dsxym1=dsxym0*exp(-dsubgrids*dtm/(etam(tm(m))/gggm(tm(m))));
+    % Correct marker stress
+    ddsxym=dsxym1-dsxym0;
+    sxym(m)=sxym(m)+ddsxym;
+    % Update subgrid diffusion on nodes
+    % i,j Node
+    if(dxmj/dx<=0.5 && dymi/dy<=0.5)
+    SXYSUM(i,j)=SXYSUM(i,j)+ddsxym*wtmij;
+    WTSUM(i,j)=WTSUM(i,j)+wtmij;
+    end
+    % i+1,j Node
+    if(dxmj/dx<=0.5 && dymi/dy>=0.5)
+    SXYSUM(i+1,j)=SXYSUM(i+1,j)+ddsxym*wtmi1j;
+    WTSUM(i+1,j)=WTSUM(i+1,j)+wtmi1j;
+    end
+    % i,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy<=0.5)
+    SXYSUM(i,j+1)=SXYSUM(i,j+1)+ddsxym*wtmij1;
+    WTSUM(i,j+1)=WTSUM(i,j+1)+wtmij1;
+    end
+    % i+1,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy>=0.5)
+    SXYSUM(i+1,j+1)=SXYSUM(i+1,j+1)+ddsxym*wtmi1j1;
+    WTSUM(i+1,j+1)=WTSUM(i+1,j+1)+wtmi1j1;
+    end
+end
+% Compute DSXXsubgrid
+DSXXsubgrid=zeros(Ny1,Nx1);
+% P-nodes
+for j=2:1:Nx
+    for i=2:1:Ny
+        if(WTPSUM(i,j)>0)
+            DSXXsubgrid(i,j)=SXXSUM(i,j)/WTPSUM(i,j);
+        end
+    end
+end
+% Correct DSXX
+DSXX=DSXX-DSXXsubgrid;
+% Compute DSXYsubgrid
+DSXYsubgrid=zeros(Ny,Nx);
+% Basic nodes
+for j=1:1:Nx
+    for i=1:1:Ny
+        if(WTSUM(i,j)>0)
+            DSXYsubgrid(i,j)=SXYSUM(i,j)/WTSUM(i,j);
+        end
+    end
+end
+% Correct DSXY
+DSXY=DSXY-DSXYsubgrid;
+end
 
 % Interpolate DSXX, DSXY to markers
 for m=1:1:marknum
@@ -882,7 +886,7 @@ for m=1:1:marknum
     wtmi1j1=(dxmj/dx)*(dymi/dy);
     % Update marker by SIGMA'xx change 
     sxxm(m)=sxxm(m)+(DSXX(i,j)*wtmij+DSXX(i+1,j)*wtmi1j+...
-                     DSXX(i,j+1)*wtmij1+DSXX(i+1,j+1)*wtmi1j1);
+            DSXX(i,j+1)*wtmij1+DSXX(i+1,j+1)*wtmi1j1);
 
     % SIGMAxy
     % Define i,j indexes for the upper left node
@@ -910,6 +914,114 @@ for m=1:1:marknum
     sxym(m)=sxym(m)+(DSXY(i,j)*wtmij+DSXY(i+1,j)*wtmi1j+...
             DSXY(i,j+1)*wtmij1+DSXY(i+1,j+1)*wtmi1j1);
 end
+
+% Compute visco-plastic viscosity on markers
+DSYIELD=0; % Yielding ERROR
+NMPLAST=0; % Number of yielding markers
+% Interpolate DSXX, DSXY to markers
+for m=1:1:marknum
+    % EPSILONxx, P
+    % Define i,j indexes for the upper left node
+    j=fix((xm(m)-xp(1))/dx)+1;
+    i=fix((ym(m)-yp(1))/dy)+1;
+    if(j<2)
+        j=2;
+    elseif(j>Nx-1)
+        j=Nx-1;
+    end
+    if(i<2)
+        i=2;
+    elseif(i>Ny-1)
+        i=Ny-1;
+    end
+    % Compute distances
+    dxmj=xm(m)-xp(j);
+    dymi=ym(m)-yp(i);
+    % Compute weights
+    wtmij=(1-dxmj/dx)*(1-dymi/dy);
+    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
+    wtmij1=(dxmj/dx)*(1-dymi/dy);
+    wtmi1j1=(dxmj/dx)*(dymi/dy);
+    % Interpolate EPSILONxx, P 
+    exxm=EXX(i,j)*wtmij+EXX(i+1,j)*wtmi1j+...
+            EXX(i,j+1)*wtmij1+EXX(i+1,j+1)*wtmi1j1;
+    prm=pr(i,j)*wtmij+pr(i+1,j)*wtmi1j+...
+            pr(i,j+1)*wtmij1+pr(i+1,j+1)*wtmi1j1;
+
+    % EPSILONxy
+    % Define i,j indexes for the upper left node
+    j=fix((xm(m)-x(1))/dx)+1;
+    i=fix((ym(m)-y(1))/dy)+1;
+    if(j<1)
+        j=1;
+    elseif(j>Nx-1)
+        j=Nx-1;
+    end
+    if(i<1)
+        i=1;
+    elseif(i>Ny-1)
+        i=Ny-1;
+    end
+    % Compute distances
+    dxmj=xm(m)-x(j);
+    dymi=ym(m)-y(i);
+    % Compute weights
+    wtmij=(1-dxmj/dx)*(1-dymi/dy);
+    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
+    wtmij1=(dxmj/dx)*(1-dymi/dy);
+    wtmi1j1=(dxmj/dx)*(dymi/dy);
+    % Interpolate EPSILONxy 
+    exym=EXY(i,j)*wtmij+EXY(i+1,j)*wtmi1j+...
+            EXY(i,j+1)*wtmij1+EXY(i+1,j+1)*wtmi1j1;
+    % Compute second stress invariant
+    siim=(sxxm(m)^2+sxym(m)^2)^0.5;
+    % Compute second invariant for a purely elastic stress build-up
+    siime=((2*exxm*dtm*gggm(tm(m))+sxxm00(m))^2+...
+        (2*exym*dtm*gggm(tm(m))+sxym00(m))^2)^0.5;
+    % Compute SIGMAyield
+    syieldm=cohesm(tm(m))+prm*frictm(tm(m));
+    syieldm=max(syieldm,0); % Non-negative strength requirement
+    % Update error
+    ynm=0;
+    if(etavpm(m)<etam(tm(m)))
+        ynm=1; % Mark counted markers
+        DSYIELD=DSYIELD+(siim-syieldm)^2; % Update Yielding ERROR
+        NMPLAST=NMPLAST+1; % Update Number of yielding markers
+    end
+    % Compute new visco-plastic viscosity
+    etavpm(m)=etam(tm(m)); % reset viscosity
+    if(syieldm<siime)
+        etavpm(m)=dtm*gggm(tm(m))*syieldm/(siime-syieldm);
+        if(etavpm(m)>etam(tm(m)))
+            etavpm(m)=etam(tm(m));
+        % Update error for non counted markers
+        elseif(ynm==0)
+            DSYIELD=DSYIELD+(siim-syieldm)^2; % Update Yielding ERROR
+            NMPLAST=NMPLAST+1; % Update Number of yielding markers
+        end
+        % Apply viscosity cutoff values
+        if(etavpm(m)<etamin)
+            etavpm(m)=etamin;
+        elseif(etavpm(m)>etamax)
+            etavpm(m)=etamax;
+        end
+    end
+end
+% Restore old stress values
+if(iplast<nplast && NMPLAST>0)
+    sxxm=sxxm00;
+    sxym=sxym00;
+end
+% Stop iteration
+if(NMPLAST==0)
+    break
+end
+end
+% Compute yielding error
+if(NMPLAST>0)
+    YIELDERR(timestep)=(DSYIELD/NMPLAST)^0.5;
+end
+% End of plasic iterations
 
 
 % Compute shear heating HS in Temperature/Pressure nodes
@@ -1049,74 +1161,74 @@ DT0=DT;
 
 
 % Apply subgrid temperature diffusion on markers
-% if(dsubgridt>0)
-% TKSUM=zeros(Ny1,Nx1);
-% RHOCPSUM=zeros(Ny1,Nx1);
-% for m=1:1:marknum
-%     % Define i,j indexes for the upper left node
-%     j=fix((xm(m)-xp(1))/dx)+1;
-%     i=fix((ym(m)-yp(1))/dy)+1;
-%     if(j<1)
-%         j=1;
-%     elseif(j>Nx)
-%         j=Nx;
-%     end
-%     if(i<1)
-%         i=1;
-%     elseif(i>Ny)
-%         i=Ny;
-%     end
-%     % Compute distances
-%     dxmj=xm(m)-xp(j);
-%     dymi=ym(m)-yp(i);
-%     % Compute weights
-%     wtmij=(1-dxmj/dx)*(1-dymi/dy);
-%     wtmi1j=(1-dxmj/dx)*(dymi/dy);    
-%     wtmij1=(dxmj/dx)*(1-dymi/dy);
-%     wtmi1j1=(dxmj/dx)*(dymi/dy);
-%     % Compute marker-node T difference
-%     dtkm0=tkm(m)-(tk1(i,j)*wtmij+tk1(i+1,j)*wtmi1j+...
-%             tk1(i,j+1)*wtmij1+tk1(i+1,j+1)*wtmi1j1);
-%     % Relax temperature difference
-%     dtkm1=dtkm0*exp(-dsubgridt*km(tm(m))*dtm/rhocpm(tm(m))*(2/dx^2+2/dy^2));
-%     % Correct marker temperature
-%     ddtkm=dtkm1-dtkm0;
-%     tkm(m)=tkm(m)+ddtkm;
-%     % Update subgrid diffusion on nodes
-%     % i,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy<=0.5)
-%     TKSUM(i,j)=TKSUM(i,j)+ddtkm*rhocpm(tm(m))*wtmij;
-%     RHOCPSUM(i,j)=RHOCPSUM(i,j)+rhocpm(tm(m))*wtmij;
-%     end
-%     % i+1,j Node
-%     if(dxmj/dx<=0.5 && dymi/dy>=0.5)
-%     TKSUM(i+1,j)=TKSUM(i+1,j)+ddtkm*rhocpm(tm(m))*wtmi1j;
-%     RHOCPSUM(i+1,j)=RHOCPSUM(i+1,j)+rhocpm(tm(m))*wtmi1j;
-%     end
-%     % i,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy<=0.5)
-%     TKSUM(i,j+1)=TKSUM(i,j+1)+ddtkm*rhocpm(tm(m))*wtmij1;
-%     RHOCPSUM(i,j+1)=RHOCPSUM(i,j+1)+rhocpm(tm(m))*wtmij1;
-%     end
-%     % i+1,j+1 Node
-%     if(dxmj/dx>=0.5 && dymi/dy>=0.5)
-%     TKSUM(i+1,j+1)=TKSUM(i+1,j+1)+ddtkm*rhocpm(tm(m))*wtmi1j1;
-%     RHOCPSUM(i+1,j+1)=RHOCPSUM(i+1,j+1)+rhocpm(tm(m))*wtmi1j1;
-%     end
-% end
-% % Compute DTsubgrid
-% DTsubgrid=zeros(Ny1,Nx1);
-% % P-nodes
-% for j=1:1:Nx1
-%     for i=1:1:Ny1
-%         if(RHOCPSUM(i,j)>0)
-%             DTsubgrid(i,j)=TKSUM(i,j)/RHOCPSUM(i,j);
-%         end
-%     end
-% end
-% % Correct DT
-% DT=DT-DTsubgrid;
-% end
+if(dsubgridt>0)
+TKSUM=zeros(Ny1,Nx1);
+RHOCPSUM=zeros(Ny1,Nx1);
+for m=1:1:marknum
+    % Define i,j indexes for the upper left node
+    j=fix((xm(m)-xp(1))/dx)+1;
+    i=fix((ym(m)-yp(1))/dy)+1;
+    if(j<1)
+        j=1;
+    elseif(j>Nx)
+        j=Nx;
+    end
+    if(i<1)
+        i=1;
+    elseif(i>Ny)
+        i=Ny;
+    end
+    % Compute distances
+    dxmj=xm(m)-xp(j);
+    dymi=ym(m)-yp(i);
+    % Compute weights
+    wtmij=(1-dxmj/dx)*(1-dymi/dy);
+    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
+    wtmij1=(dxmj/dx)*(1-dymi/dy);
+    wtmi1j1=(dxmj/dx)*(dymi/dy);
+    % Compute marker-node T difference
+    dtkm0=tkm(m)-(tk1(i,j)*wtmij+tk1(i+1,j)*wtmi1j+...
+            tk1(i,j+1)*wtmij1+tk1(i+1,j+1)*wtmi1j1);
+    % Relax temperature difference
+    dtkm1=dtkm0*exp(-dsubgridt*km(tm(m))*dtm/rhocpm(tm(m))*(2/dx^2+2/dy^2));
+    % Correct marker temperature
+    ddtkm=dtkm1-dtkm0;
+    tkm(m)=tkm(m)+ddtkm;
+    % Update subgrid diffusion on nodes
+    % i,j Node
+    if(dxmj/dx<=0.5 && dymi/dy<=0.5)
+    TKSUM(i,j)=TKSUM(i,j)+ddtkm*rhocpm(tm(m))*wtmij;
+    RHOCPSUM(i,j)=RHOCPSUM(i,j)+rhocpm(tm(m))*wtmij;
+    end
+    % i+1,j Node
+    if(dxmj/dx<=0.5 && dymi/dy>=0.5)
+    TKSUM(i+1,j)=TKSUM(i+1,j)+ddtkm*rhocpm(tm(m))*wtmi1j;
+    RHOCPSUM(i+1,j)=RHOCPSUM(i+1,j)+rhocpm(tm(m))*wtmi1j;
+    end
+    % i,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy<=0.5)
+    TKSUM(i,j+1)=TKSUM(i,j+1)+ddtkm*rhocpm(tm(m))*wtmij1;
+    RHOCPSUM(i,j+1)=RHOCPSUM(i,j+1)+rhocpm(tm(m))*wtmij1;
+    end
+    % i+1,j+1 Node
+    if(dxmj/dx>=0.5 && dymi/dy>=0.5)
+    TKSUM(i+1,j+1)=TKSUM(i+1,j+1)+ddtkm*rhocpm(tm(m))*wtmi1j1;
+    RHOCPSUM(i+1,j+1)=RHOCPSUM(i+1,j+1)+rhocpm(tm(m))*wtmi1j1;
+    end
+end
+% Compute DTsubgrid
+DTsubgrid=zeros(Ny1,Nx1);
+% P-nodes
+for j=1:1:Nx1
+    for i=1:1:Ny1
+        if(RHOCPSUM(i,j)>0)
+            DTsubgrid(i,j)=TKSUM(i,j)/RHOCPSUM(i,j);
+        end
+    end
+end
+% Correct DT
+DT=DT-DTsubgrid;
+end
 
 % Interpolate DT to markers
 for m=1:1:marknum
@@ -1149,103 +1261,6 @@ for m=1:1:marknum
         tkm(m)=tk2(i,j)*wtmij+tk2(i+1,j)*wtmi1j+...
             tk2(i,j+1)*wtmij1+tk2(i+1,j+1)*wtmi1j1;
     end
-end
-
-% Compute visco-plastic viscosity on markers
-DSYIELD=0; % Yielding ERROR
-NMPLAST=0; % Number of yielding markers
-% Interpolate DSXX, DSXY to markers
-for m=1:1:marknum
-    % EPSILONxx, P
-    % Define i,j indexes for the upper left node
-    j=fix((xm(m)-xp(1))/dx)+1;
-    i=fix((ym(m)-yp(1))/dy)+1;
-    if(j<2)
-        j=2;
-    elseif(j>Nx-1)
-        j=Nx-1;
-    end
-    if(i<2)
-        i=2;
-    elseif(i>Ny-1)
-        i=Ny-1;
-    end
-    % Compute distances
-    dxmj=xm(m)-xp(j);
-    dymi=ym(m)-yp(i);
-    % Compute weights
-    wtmij=(1-dxmj/dx)*(1-dymi/dy);
-    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
-    wtmij1=(dxmj/dx)*(1-dymi/dy);
-    wtmi1j1=(dxmj/dx)*(dymi/dy);
-    % Interpolate EPSILONxx, P 
-    exxm=EXX(i,j)*wtmij+EXX(i+1,j)*wtmi1j+...
-            EXX(i,j+1)*wtmij1+EXX(i+1,j+1)*wtmi1j1;
-    prm=pr(i,j)*wtmij+pr(i+1,j)*wtmi1j+...
-            pr(i,j+1)*wtmij1+pr(i+1,j+1)*wtmi1j1;
-
-    % EPSILONxy
-    % Define i,j indexes for the upper left node
-    j=fix((xm(m)-x(1))/dx)+1;
-    i=fix((ym(m)-y(1))/dy)+1;
-    if(j<1)
-        j=1;
-    elseif(j>Nx-1)
-        j=Nx-1;
-    end
-    if(i<1)
-        i=1;
-    elseif(i>Ny-1)
-        i=Ny-1;
-    end
-    % Compute distances
-    dxmj=xm(m)-x(j);
-    dymi=ym(m)-y(i);
-    % Compute weights
-    wtmij=(1-dxmj/dx)*(1-dymi/dy);
-    wtmi1j=(1-dxmj/dx)*(dymi/dy);    
-    wtmij1=(dxmj/dx)*(1-dymi/dy);
-    wtmi1j1=(dxmj/dx)*(dymi/dy);
-    % Interpolate EPSILONxy 
-    exym=EXY(i,j)*wtmij+EXY(i+1,j)*wtmi1j+...
-            EXY(i,j+1)*wtmij1+EXY(i+1,j+1)*wtmi1j1;
-    % Compute second stress invariant
-    siim=(sxxm(m)^2+sxym(m)^2)^0.5;
-    % Compute second invariant for a purely elastic stress build-up
-    siime=((2*exxm*dtm*gggm(tm(m))+sxxm00(m))^2+...
-        (2*exym*dtm*gggm(tm(m))+sxym00(m))^2)^0.5;
-    % Compute SIGMAyield
-    syieldm=cohesm(tm(m))+prm*frictm(tm(m));
-    syieldm=max(syieldm,0); % Non-negative strength requirement
-    % Update error
-    ynm=0;
-    if(etavpm(m)<etam(tm(m)))
-        ynm=1; % Mark counted markers
-        DSYIELD=DSYIELD+(siim-syieldm)^2; % Update Yielding ERROR
-        NMPLAST=NMPLAST+1; % Update Number of yielding markers
-    end
-    % Compute new visco-plastic viscosity
-    etavpm(m)=etam(tm(m)); % reset viscosity
-    if(syieldm<siime)
-        etavpm(m)=dtm*gggm(tm(m))*syieldm/(siime-syieldm);
-        if(etavpm(m)>etam(tm(m)))
-            etavpm(m)=etam(tm(m));
-        % Update error for non counted markers
-        elseif(ynm==0)
-            DSYIELD=DSYIELD+(siim-syieldm)^2; % Update Yielding ERROR
-            NMPLAST=NMPLAST+1; % Update Number of yielding markers
-        end
-        % Apply viscosity cutoff values
-        if(etavpm(m)<etamin)
-            etavpm(m)=etamin;
-        elseif(etavpm(m)>etamax)
-            etavpm(m)=etamax;
-        end
-    end
-end
-% Compute yielding error
-if(NMPLAST>0)
-    YIELDERR(timestep)=(DSYIELD/NMPLAST)^0.5;
 end
 
 % Compute velocity in pressure nodes
@@ -1426,6 +1441,7 @@ for m=1:1:marknum
     ym(m)=ym(m)+dtm*vymeff;
 end  
 
+
 % Update timesum
 timesum=timesum+dtm;
 
@@ -1533,12 +1549,10 @@ axis ij image;
 colorbar
 title(['log10ETA, Pa*s timestep=',num2str(timestep),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
 % Save figure
-namefig=['Vep_' num2str(timestep)];
+namefig=['Vep10iter_' num2str(timestep)];
 print ('-djpeg', '-r150',namefig)
 
 pause(0.1)
 end
-
-
 
 end
