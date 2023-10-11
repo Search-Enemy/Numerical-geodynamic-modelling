@@ -1,6 +1,7 @@
 %This program complished the process of 2D Eulerian advection with method
-%of MIC(allocating memory temporarily) in vistoelatoplastic material.
-% "NOTE" line 23,line 107 !!!
+%of MIC(allocating memory temporarily) in visto-elato-plastic material.
+% "NOTE" line 24,line 108 !!!
+% The key are LINE1048-1067 and LINE1191-1286.
 clear all;clf;
 % Set parameters
 % Length of model
