@@ -1,7 +1,10 @@
-%This program complished the process of 2D Eulerian advection with method
-%of MIC(allocating memory temporarily) in vistoelatoplastic material.
-% "NOTE" line 23,line 107 !!!
+% This program complished the process of 2D Eulerian advection with method
+% of MIC(allocating memory temporarily) in vistoelatoplastic material.
+% Global visco-elasto-plastic iterations on "Eulerian-NODE".
+% THE KEY OF PROGRAM：
+% LINE166,LINE488,LINE152-LINE160,LINE482-487,LINE753-LINE860
 clear all;clf;
+aaaa = 0;
 % Set parameters
 % Length of model
 Lx = 100000; 
@@ -152,10 +155,10 @@ dxymax   = 0.001;
 timesum = 0;
 Nt = 400;
 nloop=100000;
-yerrmax =  3e5;
+yerrmax =  3e+5;
 dtstep = 200;
-YIELDERR=zeros(1,Nt); % Yielding error of markers
 YIELDERRNODAL=zeros(1,nloop);
+AAAAA=zeros(1,Nt);
 minetavpm = 1e+17;
 maxetavpm = 1e+23;
 DTmax=20; % max temperature change per time step, K
@@ -167,7 +170,7 @@ for t = t:1:Nt
 % Save old stresses
 sxxm00=sxxm; 
 sxym00=sxym;
-for iloop=1:1:nloop
+
 
     % BASCI NODE
     WTSUM = zeros(Ny,Nx);
@@ -479,10 +482,13 @@ for iloop=1:1:nloop
     % 假设第一次循环时，必定不会满足容许误差限，所以dt/2
     % 然后在之后的每一个timestep 都要逐渐增加dt,但不会超过5e7.
     dt = min(1.1*dt,dtelastic);
+    AAAAA(t) = dt;
     % 传递（old）YNN（屈服标记）与ETAVP（miusvp）
     YYN00 = YYN;
     ETAVP00 = ETAVP;% ETAVP at "every timestep" instead of "every loop(200)"
     % Mechanical Solution
+for iloop=1:1:nloop
+        
     for i=2:1:Ny
         for j=2:1:Nx
             ETAPVP(i,j)=1/((1/ETAVP(i-1,j-1)+1/ETAVP(i,j-1)+1/ETAVP(i-1,j)+1/ETAVP(i,j))/4);
@@ -739,13 +745,12 @@ for iloop=1:1:nloop
             DSXX(i,j) = SXX(i,j) - SXX0(i,j);
             % The second invariant value.
             EII(i,j) = ( EXX(i,j)^2 + ((EXY(i-1,j)   + EXY(i,j-1) ...
-                                  + EXY(i-1,j-1) + EXY(i,j))/4)^2 )^0.5;
+                       + EXY(i-1,j-1) + EXY(i,j))/4)^2 )^0.5;
             SII(i,j) = ( SXX(i,j)^2 + ((SXY(i-1,j)   + SXY(i,j-1) ...
-                                  + SXY(i-1,j-1) + SXY(i,j))/4)^2 )^0.5;
+                       + SXY(i-1,j-1) + SXY(i,j))/4)^2 )^0.5;
         end
     end
-    ETA5=ETA; % 传递老mius 而不是miusvp ，在每一次timestep
-    YYN5=zeros(Ny,Nx);% 设置一个中间变量来传递“屈服标记矩阵”
+    
     p(:,1)  = p(:,2);
     p(:,Nx1)= p(:,Nx);
     p(1,:)  = p(2,:);
@@ -754,6 +759,8 @@ for iloop=1:1:nloop
     SXX(:,Nx1)=SXX(:,Nx);
     SXX(1,:)=SXX(2,:);
     SXX(Ny1,:)=SXX(Ny,:);
+    ETA5=ETA; % 传递老mius 而不是miusvp ，在每一次timestep
+    YYN5=zeros(Ny,Nx);% 设置一个中间变量来传递“屈服标记矩阵”
     % "Update ETAVP(i,j)"
     DIJYIELD = 0;
     NIJPLAST = 0;
@@ -817,12 +824,12 @@ for iloop=1:1:nloop
     % Compute yielding error
     % 如果有至少一个点满足屈服条件，那么就需要计算误差
     if(NIJPLAST>0)
-        YIELDERRNODAL(t)=(DIJYIELD/NIJPLAST)^0.5;
+        YIELDERRNODAL(iloop)=(DIJYIELD/NIJPLAST)^0.5;
     end
     
     % Stop iteration
     if(NIJPLAST==0 || iloop==nloop || YIELDERRNODAL(iloop)<yerrmax)
-        break;
+        break
         % 达到3个条件之一则停止循环
         % 1、没有达到屈服的node点（一般不会）；
         % 2、达到100000次（一般不会）；
@@ -839,9 +846,10 @@ for iloop=1:1:nloop
         if(fix(iloop/dtstep)*dtstep==iloop)% reach to 200 times
             % Decrease timestep
             dt=dt/2;% dt/2
+            aaaa = 1;
             % Reset old viscoplastic viscosity
             ETAVP=ETAVP00;
-            YYN=YYN00;
+            YYN  =YYN00;
         else
             % Use new viscoplastic viscosity
             ETAVP=ETA5;
@@ -876,8 +884,8 @@ end
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         if(YYN(i,j)>0 || YYN(i+1,j)>0 || YYN(i,j+1)>0 || YYN(i+1,j+1)>0)            
             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-            etavpm(m)= 1/(YYN(i,j)*wtmij/ETAVP(i,j) + YYN(i+1,j)*wtmi1j/ETAVP(i+1,j)  ...
-                +YYN(i,j+1)*wtmij1/ETAVP(i,j+1) + YYN(i+1,j+1)*wtmi1j1/ETAVP(i+1,j+1));
+            etavpm(m)= 1/(YYN(i,j)*wtmij   /ETAVP(i,j)   + YYN(i+1,j)*wtmi1j   /ETAVP(i+1,j)  ...
+                         +YYN(i,j+1)*wtmij1/ETAVP(i,j+1) + YYN(i+1,j+1)*wtmi1j1/ETAVP(i+1,j+1));
             % 限制粘度？？？
             if(etavpm(m)>=etam(tm(m)))
                 etavpm(m)=etam(tm(m));
