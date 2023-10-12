@@ -1607,3 +1607,6 @@ end
         pause(0.1);
     end
 end
+figure(4);
+plot(YIELDERRNODAL(1:500),'k','LineWidth',3);
+title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
