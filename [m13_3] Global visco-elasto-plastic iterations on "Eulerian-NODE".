@@ -832,7 +832,7 @@ for iloop=1:1:nloop
     if(NIJPLAST==0 || iloop==nloop || YIELDERRNODAL(iloop)<yerrmax)
         break
         % 达到3个条件之一则停止循环
-        % 1、没有达到屈服的node点（一般不会）；
+        % 1、没有达到屈服的node点（前面的timestep一般会）；
         % 2、达到100000次（一般不会）；
         % 3、本次误差小于3e5（一般会）
         % Repeat iteration（最大次数为100000/200次）
