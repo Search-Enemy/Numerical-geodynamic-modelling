@@ -1,7 +1,8 @@
 %This program complished the process of 2D Eulerian advection with method
-%of MIC(allocating memory temporarily) in visto-elato-plastic material.
-% "NOTE" line 24,line 108 !!!
-% The key are LINE1048-1067 and LINE1191-1286.
+%of MIC(allocating memory temporarily) in vistoelatoplastic material.
+% "NOTE" LINE 23,LINE 107 ,LINE135
+% LINE970-LINE1059,LINE1183-1278
+% LOOPSTART LINE167,LOOPEND LINE1290.
 clear all;clf;
 % Set parameters
 % Length of model
@@ -153,6 +154,7 @@ Nt = 400;
 YIELDERR=zeros(1,Nt); % Yielding error of markers
 minetavpm = 1e+17;
 maxetavpm = 1e+23;
+nloop = 10;
 DTmax=20; % max temperature change per time step, K
 subgrdifcoes = 0;
 subgrdifcoet = 0;
@@ -162,7 +164,8 @@ for t = t:1:Nt
 % Save old stresses
 sxxm00=sxxm; 
 sxym00=sxym;
-    
+for iloop = 1:1:nloop
+        
     % BASCI NODE
     WTSUM = zeros(Ny,Nx);
     ETASUM = zeros(Ny,Nx);
@@ -1029,14 +1032,6 @@ sxym00=sxym;
         % transform vector to grids
         % U has Ny1 rows and Nx1 columns
         U = reshape(u, Ny1, Nx1);
-%         for j=1:1:Nx1
-%             for i=1:1:Ny1
-%                 % Compute global index
-%                 kt=(j-1)*Ny1+i;
-%                 % Reload solution
-%                 T1(i,j)=u(kt);
-%             end
-%         end
         T1 = U;
         % Computing dTi,j = dTi,j(subgrid) + dTi,j(remaining)
         % Eq10.13
@@ -1279,6 +1274,20 @@ sxym00=sxym;
             end
         end
     end
+    % 如果对此timestep进行循环，则需要使用初始应力状态。
+    % 直到进入到下一个timestep才更新应力状态’
+    % 并且sxxm00与sxym00也会在下一个timestep更新
+    % 而不是永远继承t = 0时的应力状态。
+    if(iloop<nloop && NMPLAST>0)
+        sxxm=sxxm00;
+        sxym=sxym00;
+    end
+    % 如果没有屈服的节点或达到了最大循环次数10，那么可以直接退出循环
+    % 进入到下一个timestep
+    if(NMPLAST==0)
+        break;
+    end
+end
     % END
     % Compute yielding error
     if(NMPLAST>0)
