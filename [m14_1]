@@ -2,11 +2,10 @@
 % THE KEY OF PROGRAM：
 % LINE166,LINE488,LINE152-LINE160,LINE482-487,LINE753-LINE860
 % LOOPSTART491,LOOPEND862
-% 无论对欧拉点还是拉格朗日标记进行全局循环都会再次解stokes equation
+% 无论对欧拉点还是拉格朗日标记进行全局循环都会再次解stokes equ。
 % 但前者不需要在每次迭代重新更新标记特性，除非进入了下一个timestep。
 % adjust DTmax
 clear all;clf;
-aaaa = 0;
 % Set parameters
 % Length of model
 Lx = 100000; 
@@ -21,6 +20,9 @@ Ny1 = Ny+1;
 % Interval of E-staggered-nodes
 dx = Lx / (Nx-1);
 dy = Ly / (Ny-1);
+% Gravity acceleration
+gx = 0;
+gy = 0;
 % Basic nodes.
 x = 0:dx:Lx;
 y = 0:dy:Ly;
@@ -36,45 +38,48 @@ yp = -dy/2 : dy : Ly+dy/2;
 
 % Velocity and Pressure matrix
 % Vx NODE
+vx0 = zeros(Ny1,Nx1);
 vx = zeros(Ny1,Nx1);
 RHOVX=zeros(Ny1,Nx1); 
 KVX=zeros(Ny1,Nx1); 
 % Vy NODE
+vy0 = zeros(Ny1,Nx1);
 vy = zeros(Ny1,Nx1);
 RHOVY=zeros(Ny1,Nx1); 
 KVY=zeros(Ny1,Nx1); 
 % P NODE
-P = zeros(Ny1,Nx1);
-ETAPVP = zeros(Ny1,Nx1);
-GGGP = zeros(Ny1,Nx1);
 RHOP = zeros(Ny1,Nx1);
 RHOPCP = zeros(Ny1,Nx1); %Den*Cp(hct)
+ALPHAP = zeros(Ny1,Nx1);
 BEITAP = zeros(Ny1,Nx1);
 Hrij = zeros(Ny1,Nx1);
 Haij = zeros(Ny1,Nx1);
 Hsij = zeros(Ny1,Nx1);
-Aefij = zeros(Ny1,Nx1);
+ETAPVP = zeros(Ny1,Nx1);
+GGGP = zeros(Ny1,Nx1);
 EXX=zeros(Ny1,Nx1); % EPSILONxx, 1/s
 SXX=zeros(Ny1,Nx1); % SIGMA'xx, 1/s
 SXX0 = zeros(Ny1,Nx1);
 T0 = zeros(Ny1,Nx1); %Told
 T1 = zeros(Ny1,Nx1); %Tnew
-    % vx/vy at pnodes
+P0 = zeros(Ny1,Nx1);
+P = zeros(Ny1,Nx1);
+% vx/vy at pnodes
 pvx = zeros(Ny1,Nx1);
 pvy = zeros(Ny1,Nx1);
-% Gravity acceleration
-gy = 0;
-gx = 0;
+
 % Basic node
 ETAVP = zeros(Ny,Nx);
+ETA = zeros(Ny,Nx);
 GGG = zeros(Ny,Nx);
 EXY = zeros(Ny,Nx);
 SXY = zeros(Ny,Nx);
 SXY0 = zeros(Ny,Nx);
 wyx = zeros(Ny,Nx);
-ETA = zeros(Ny,Nx);
 FRICT = zeros(Ny,Nx);
 COSHE = zeros(Ny,Nx);
+YYN = zeros(Ny,Nx);% Determine whether node meets yielding condition.
+
 % Stokes-equ and continuity-equ
 % Temperature-equ
 % Amount of markers.
@@ -88,18 +93,21 @@ dym = Ly/Nym;
 % Stokes-equ and continuity-equ
 xm=zeros(1,marknum); % Horizontal coordinates, m
 ym=zeros(1,marknum);
+tm = zeros(1,marknum); % index of properties
+tkm = zeros(1,marknum); % temperature
 sxxm = zeros(1,marknum);
 sxym = zeros(1,marknum);
 etavpm = zeros(1,marknum);
-tkm = zeros(1,marknum); % temperature
-tm = zeros(1,marknum);
+p0m=zeros(1,marknum); % Marker pressure, Pa
+vx0m=zeros(1,marknum); % Marker vx, m/s
+vy0m=zeros(1,marknum); % Marker vy, m/s
 
 % Parameters ()
 rhom   = [3300   3200   1     ]; % Density, kg/m^3
 etam   = [1e+23  1e+17  1e+17 ]; % Viscosity, Pa s
 rhocpm = [3.3e+6 3.2e+6 3.3e+6]; % Volumetric heat capacity, kg/m^3
 alpham = [3e-5   2e-5   0     ]; % Thermal expansion, 1/K
-beitam = [1e-11,1e-11,1e-11];% Compressibility 1/Pa
+beitam = [1e-12,1e-12,1e-12];% Compressibility 1/Pa
 km     = [3      2      3000  ]; % Thermal conductivity, W/m/K
 hrm    = [2e-8   3e-8   0     ]; % Radiogenic heat production, W/m^3
 gggm   = [1e+11  1e+11  1e+11 ]; % Shear Modulus, Pa
@@ -131,9 +139,6 @@ for jm=1:1:Nxm
     end
 end
 
-%WHY???
-Kcont = 1e+21/dx;
-
 % Define matrix for Stokes
 unknowns = Nx1*Ny1*3;
 R  =   zeros(unknowns, 1);
@@ -148,43 +153,58 @@ bc_left   = -1;
 bc_right  = -1;
 bc_top    = -1;
 bc_bottom = -1;
-vxleft   = 5e-9;
-vxright  = -5e-9;
-vytop    = -5e-9;
-vybottom = 5e-9;
-YYN = zeros(Ny,Nx);
+% Extension/shortening velocities
+strainrate=1e-13; % Shortening strain rate
+vxleft=strainrate*Lx/2;
+vxright=-strainrate*Lx/2;
+vytop=-strainrate*Ly/2;
+vybottom=strainrate*Ly/2;
+% In fact, bc of veloity is unchanged.
+% vxleft   = 5e-9;
+% vxright  = -5e-9;
+% vytop    = -5e-9;
+% vybottom = 5e-9;
+% Pressure BC
+PCONF=1e+8;
  
 % Define dt for stokes equation.
-dtelastic = 0.5e+8; % initial timestep
+dtelastic = 5e+7; % initial timestep
 dt = dtelastic;
-dxymax   = 0.001;   
+dtmin = 1e+6;
+dxymax   = 0.01;
+dtkoefv=1.1; % Koefficient to decrese dt for P,T,vx,vy,SIGMA limits 
+dtkoef=2; % Koefficient to decrese dt in case of no convergence
+dtstep=200; % Number of iterations before changing dt
+dtkoefup=1.1; % 达到更改dt(dt/2)的循环迭代次数后，逐渐增加dt(1.1)但不会超过dtelastic
+% "每一个时间步长，而不是每一个迭代"   ？？？下面数值从何而来
+DTmax=20; % max temperature change per iteration step, K
+DPmax = 1e9; % max pressure change per iteration step, Pa
+DSmax = 1e9; % max stress change per time step.
+subgrdifcoes =0; % Subgrid"Stress and Pressure(SXX,SXY,P)" diffusion parameter
+subgrdifcoet=0; % Subgrid "temperature(T)" diffusion parameter
+subgrdifcoev=0; % Subgrid "velocity(Vx,Vy)" diffusion parameter
 timesum = 0;
-Nt = 400;
-nloop=100000;
-yerrmax =  3e+5;
-dtstep = 200;
-YIELDERRNODAL=zeros(1,nloop);
-AAAAA=zeros(1,Nt);
 minetavpm = 1e+17;
 maxetavpm = 1e+23;
-DTmax=1e-3; % max temperature change per iteration step, K
-DPmax = 3e5; % max pressure change per iteration step, Pa
-DSmax = 3e8; % max stress change per time step.
+nloop=100000;
+yerrmax =  3e+5;% Tolerance level for yielding error, Pa
+terrmax=1e-3; % Tolerance level for temperature error, K
+perrmax=3e+5; % Tolerance level for pressure error, Pa，下面三行是对应的存储数组
+YIELDERRNODAL=zeros(1,nloop);
+TEMERRNODAL = zeros(1,nloop);
+PREERRNODAL = zeros(1,nloop);
+% 400-->500
+Nt = 500;
 c = 1e-3;  % empirical coefficent
-subgrdifcoes = 0;
-subgrdifcoet = 0;
 t = 1;
 for t = t:1:Nt     
     
 % Save old stresses
 sxxm00=sxxm; 
 sxym00=sxym;
-P0 = P;
-vx0 = vx;
-vy0 = vy;
-T00 = T1;
-SXX00 = SXX;
-SXY00 = SXY;
+% what items were added in this interpolation???
+% Vx(vxnode),Vy(vynode),Beita(pnode)
+
     % BASCI NODE
     WTSUM = zeros(Ny,Nx);
     ETAVPSUM = zeros(Ny,Nx);
@@ -197,10 +217,12 @@ SXY00 = SXY;
     RHOXSUM=zeros(Ny1,Nx1);
     WTXSUM=zeros(Ny1,Nx1);
     KXSUM=zeros(Ny1,Nx1);
+    VXSUM = zeros(Ny1,Nx1);
     % Vy nodes    
     RHOYSUM=zeros(Ny1,Nx1);
     WTYSUM=zeros(Ny1,Nx1);
     KYSUM=zeros(Ny1,Nx1);
+    VYSUM = zeros(Ny1,Nx1);
     %Pnodes
     WTPSUM = zeros(Ny1,Nx1);% weights except T
     ETAPVPSUM = zeros(Ny1,Nx1);% Viscosity at P node
@@ -212,7 +234,7 @@ SXY00 = SXY;
     RHOCPSUM = zeros(Ny1,Nx1);% Den*Cp at P node
     BEITAPSUM = zeros(Ny1,Nx1);   %beita 1/Pa
     TKSUM = zeros(Ny1,Nx1); % T at P node
-    
+    P0SUM = zeros(Ny1,Nx1); % P0 at P node
     % Interpolate viscosity from markers to BASIC NODES.
     % Searching the coordinate of upper-left node of every L-marker.
     for m = 1:1:marknum
@@ -304,18 +326,22 @@ SXY00 = SXY;
         % i,j Node
         RHOXSUM(i,j)=RHOXSUM(i,j)+rhom(tm(m))*wtmij;
         KXSUM(i,j)=KXSUM(i,j)+km(tm(m))*wtmij;
+        VXSUM(i,j)=VXSUM(i,j)+vx0m(tm(m))*rhom(tm(m))*wtmij;
         WTXSUM(i,j)=WTXSUM(i,j)+wtmij;
         % i+1,j Node
         RHOXSUM(i+1,j)=RHOXSUM(i+1,j)+rhom(tm(m))*wtmi1j;
         KXSUM(i+1,j)=KXSUM(i+1,j)+km(tm(m))*wtmi1j;
+        VXSUM(i+1,j)=VXSUM(i+1,j)+vx0m(tm(m))*rhom(tm(m))*wtmi1j;
         WTXSUM(i+1,j)=WTXSUM(i+1,j)+wtmi1j;
         % i,j+1 Node
         RHOXSUM(i,j+1)=RHOXSUM(i,j+1)+rhom(tm(m))*wtmij1;
         KXSUM(i,j+1)=KXSUM(i,j+1)+km(tm(m))*wtmij1;
+        VXSUM(i,j+1)=VXSUM(i,j+1)+vx0m(tm(m))*rhom(tm(m))*wtmij1;
         WTXSUM(i,j+1)=WTXSUM(i,j+1)+wtmij1;
         % i+1,j+1 Node
         RHOXSUM(i+1,j+1)=RHOXSUM(i+1,j+1)+rhom(tm(m))*wtmi1j1;
         KXSUM(i+1,j+1)=KXSUM(i+1,j+1)+km(tm(m))*wtmi1j1;
+        VXSUM(i+1,j+1)=VXSUM(i+1,j+1)+vx0m(tm(m))*rhom(tm(m))*wtmi1j1;
         WTXSUM(i+1,j+1)=WTXSUM(i+1,j+1)+wtmi1j1;
         
         % Interpolation to vy-nodes
@@ -344,18 +370,22 @@ SXY00 = SXY;
         % i,j Node
         RHOYSUM(i,j)=RHOYSUM(i,j)+rhom(tm(m))*wtmij;
         KYSUM(i,j)=KYSUM(i,j)+km(tm(m))*wtmij;
+        VYSUM(i,j)=VYSUM(i,j)+vy0m(tm(m))*rhom(tm(m))*wtmij;
         WTYSUM(i,j)=WTYSUM(i,j)+wtmij;
         % i+1,j Node
         RHOYSUM(i+1,j)=RHOYSUM(i+1,j)+rhom(tm(m))*wtmi1j;
         KYSUM(i+1,j)=KYSUM(i+1,j)+km(tm(m))*wtmi1j;
+        VYSUM(i+1,j)=VYSUM(i+1,j)+vy0m(tm(m))*rhom(tm(m))*wtmi1j;
         WTYSUM(i+1,j)=WTYSUM(i+1,j)+wtmi1j;
         % i,j+1 Node
         RHOYSUM(i,j+1)=RHOYSUM(i,j+1)+rhom(tm(m))*wtmij1;
         KYSUM(i,j+1)=KYSUM(i,j+1)+km(tm(m))*wtmij1;
+        VYSUM(i,j+1)=VYSUM(i,j+1)+vy0m(tm(m))*rhom(tm(m))*wtmij1;
         WTYSUM(i,j+1)=WTYSUM(i,j+1)+wtmij1;
         % i+1,j+1 Node
         RHOYSUM(i+1,j+1)=RHOYSUM(i+1,j+1)+rhom(tm(m))*wtmi1j1;
         KYSUM(i+1,j+1)=KYSUM(i+1,j+1)+km(tm(m))*wtmi1j1;
+        VYSUM(i+1,j+1)=VYSUM(i+1,j+1)+vy0m(tm(m))*rhom(tm(m))*wtmi1j1;
         WTYSUM(i+1,j+1)=WTYSUM(i+1,j+1)+wtmi1j1;
         % Interpolation to P-nodes
         % Define i,j indexes for the upper left node
@@ -391,6 +421,7 @@ SXY00 = SXY;
             HRSUM(i,j)=HRSUM(i,j)+hrm(tm(m))*wtmij;
             TKSUM(i,j)=TKSUM(i,j)+tkm(m)*rhocpm(tm(m))*wtmij;
             BEITAPSUM(i,j)=BEITAPSUM(i,j)+beitam(tm(m))*wtmij;
+            P0SUM(i,j) = P0SUM(i,j)+p0m(tm(m))*wtmij;
             WTPSUM(i,j)=WTPSUM(i,j)+wtmij;
         end
         % i+1,j Node
@@ -404,6 +435,7 @@ SXY00 = SXY;
             HRSUM(i+1,j)=HRSUM(i+1,j)+hrm(tm(m))*wtmi1j;
             TKSUM(i+1,j)=TKSUM(i+1,j)+tkm(m)*rhocpm(tm(m))*wtmi1j;
             BEITAPSUM(i+1,j)=BEITAPSUM(i+1,j)+beitam(tm(m))*wtmi1j;
+            P0SUM(i+1,j) = P0SUM(i+1,j)+p0m(tm(m))*wtmi1j;
             WTPSUM(i+1,j)=WTPSUM(i+1,j)+wtmi1j;
         end
         % i,j+1 Node
@@ -417,6 +449,7 @@ SXY00 = SXY;
             HRSUM(i,j+1)=HRSUM(i,j+1)+hrm(tm(m))*wtmij1;
             TKSUM(i,j+1)=TKSUM(i,j+1)+tkm(m)*rhocpm(tm(m))*wtmij1;
             BEITAPSUM(i,j+1)=BEITAPSUM(i,j+1)+beitam(tm(m))*wtmij1;
+            P0SUM(i,j+1) = P0SUM(i,j+1)+p0m(tm(m))*wtmij1;
             WTPSUM(i,j+1)=WTPSUM(i,j+1)+wtmij1;
         end
         % i+1,j+1 Node
@@ -430,6 +463,7 @@ SXY00 = SXY;
             HRSUM(i+1,j+1)=HRSUM(i+1,j+1)+hrm(tm(m))*wtmi1j1;
             TKSUM(i+1,j+1)=TKSUM(i+1,j+1)+tkm(m)*rhocpm(tm(m))*wtmi1j1;
             BEITAPSUM(i+1,j+1)=BEITAPSUM(i+1,j+1)+beitam(tm(m))*wtmi1j1;
+            P0SUM(i+1,j+1) = P0SUM(i+1,j+1)+p0m(tm(m))*wtmi1j1;
             WTPSUM(i+1,j+1)=WTPSUM(i+1,j+1)+wtmi1j1;
         end
     end
@@ -463,6 +497,8 @@ SXY00 = SXY;
                 RHOVY(i,j)=RHOYSUM(i,j)/WTYSUM(i,j);
                 % K_v
                 KVY(i,j)=KYSUM(i,j)/WTYSUM(i,j);
+                % Vy
+                vy0(i,j) = VYSUM(i,j)/RHOYSUM(i,j);
             end
             % VX-nodes:(Nx * Ny1)absent Nx1=0 !!!
             if(WTXSUM(i,j)>0)
@@ -470,6 +506,8 @@ SXY00 = SXY;
                 RHOVX(i,j)=RHOXSUM(i,j)/WTXSUM(i,j);
                 % K_h
                 KVX(i,j) = KXSUM(i,j)/WTXSUM(i,j);
+                % Vx
+                vx0(i,j) = VXSUM(i,j)/RHOXSUM(i,j);
             end
         end
     end
@@ -477,15 +515,17 @@ SXY00 = SXY;
     for j = 1:1:Nx1
         for i = 1:1:Ny1
             if(WTPSUM(i,j)>0)
-                ETAPVP(i,j) = ETAPVPSUM(i,j)/WTPSUM(i,j);%etaVP = eta in viscosity-elastic materials.
+                % 这一行不必要，答案没有写，后面会计算ETAVPs的平均值来作为ETAVPn
+%                 ETAPVP(i,j) = ETAPVPSUM(i,j)/WTPSUM(i,j);%etaVP = eta in viscosity-elastic materials.
                 GGGP(i,j) = WTPSUM(i,j)/GGGPSUM(i,j);
                 SXX0(i,j) = SXXSUM(i,j)/WTPSUM(i,j);
                 RHOP(i,j) = RHOSUM(i,j)/WTPSUM(i,j);
                 Hrij(i,j) = HRSUM(i,j)/WTPSUM(i,j);
-                Aefij(i,j) = ALPHASUM(i,j)/WTPSUM(i,j);
+                ALPHAP(i,j) = ALPHASUM(i,j)/WTPSUM(i,j);
                 RHOPCP(i,j) = RHOCPSUM(i,j)/WTPSUM(i,j);%Den*Cp
                 T0(i,j)  = TKSUM(i,j)/RHOCPSUM(i,j);%T
                 BEITAP(i,j) = BEITAPSUM(i,j)/WTPSUM(i,j);%beita
+                P0(i,j) = P0SUM(i,j)/WTPSUM(i,j);%P0
             end
         end
     end
@@ -497,20 +537,55 @@ SXY00 = SXY;
     % left and right Ibc
     T0(:,1) = T0(:,2);
     T0(:,Nx1) = T0(:,Nx);
-    if(t==1)
-        T00 = T0;
-    end
+    % Apply boundary condition for vx0 and vy0
+    % Applying "VX-VELOCITY boundary" conditions for interpolated vx0
+    % Upper 
+    vx0(1,2:Nx-1)=-bc_top*vx0(2,2:Nx-1); % free slip
+    % Lower 
+    vx0(Ny1,2:Nx-1)=-bc_bottom*vx0(Ny,2:Nx-1); % free slip
+    % Left 
+    vx0(:,1)=vxleft; % no slip/constant velocity
+    % Right 
+    vx0(:,Nx)=vxright; % no slip/constant velocity
+    % Applying "VY-VELOCITY boundary" conditions for interpolated vy0
+    % Left 
+    vy0(2:Ny-1,1)=-bc_left*vy0(2:Ny-1,2); % free slip
+    % Right 
+    vy0(2:Ny-1,Nx1)=-bc_right*vy0(2:Ny-1,Nx); % free slip
+    % Upper
+    vy0(1,:)=vytop; % no slip/constant velocity
+    % Lower 
+    vy0(Ny,:)=vybottom; % no slip/constant velocity
+    % Apply P boundary condition for interpolated P0   ?????
+    dp0=P0(2,2)-PCONF; % dp0 == 0;
+    P0=P0-dp0;     
+    p0m=p0m-dp0;
+    
     
     % 假设第一次循环时，必定不会满足容许误差限，所以dt/2
     % 然后在之后的每一个timestep 都要逐渐增加dt,但不会超过5e7.
-    dt = min(1.1*dt,dtelastic);
-    AAAAA(t) = dt;
+    dt = min(dtkoefup*dt,dtelastic);
     % 传递（old）YNN（屈服标记）与ETAVP（miusvp）
     YYN00 = YYN;
     ETAVP00 = ETAVP;% ETAVP at "every timestep" instead of "every loop(200)"
+    T1 = T0;
+    % 定义达到改变dt的临界迭代次数(200)变量
+    icount = 0;
     % Mechanical Solution
 for iloop=1:1:nloop
         
+    % etaweak == etamin;gggweak == gggmin
+    NSetavpmin = max(etaweak,c*dt*min(min(GGG)));% ???max
+    % Limit viscosity in the basic nodes
+    for i=1:1:Ny
+        for j=1:1:Nx
+            if(ETAVP(i,j)<NSetavpmin)
+                ETAVP(i,j)=NSetavpmin;
+            end
+        end
+    end
+    Kcont  = NSetavpmin/dx;   
+    % ETAPVP was only computed at this.
     for i=2:1:Ny
         for j=2:1:Nx
             ETAPVP(i,j)=1/((1/ETAVP(i-1,j-1)+1/ETAVP(i,j-1)+1/ETAVP(i-1,j)+1/ETAVP(i,j))/4);
@@ -675,18 +750,11 @@ for iloop=1:1:nloop
             end
             
             % P equation External points
-            if(i==1 || j==1 || i==Ny1 || j==Nx1 ||...
-                    (i==2 && j==2))
+            if(i==1 || j==1 || i==Ny1 || j==Nx1)
                 % Boundary Condition
                 % 1*P=0
                 coe(kpm,kpm)=1; % Left part
-                % Apply 108 Pa as the boundary condition for pressure.
                 R(kpm)=0; % Right part  !!!
-                % Real BC
-                if(i==2 && j==2)
-                    coe(kpm,kpm)=1*Kcont; %Left part
-                    R(kpm)=1e8; % Right part !!!
-                end
             else
                 % Internal points: continuity eq.
                 % dVx/dx+dVy/dy=0
@@ -701,9 +769,9 @@ for iloop=1:1:nloop
                 coe(kpm,kvx)=1/dx; % Vx2
                 coe(kpm,kvy-3)=-1/dy; % Vy1
                 coe(kpm,kvy)=1/dy; % Vy2
-                coe(kpm,kpm) = BEITAP(i,j)/dt;
+                coe(kpm,kpm) = Kcont*BEITAP(i,j)/dt;
                 % Right part
-                R(kpm)=0 + P0(i,j)*BEITAP(i,j)/dt  + Aefij(i,j)*(T0(i,j)-T00(i,j))/dt;
+                R(kpm)=0 + P0(i,j)*BEITAP(i,j)/dt  + ALPHAP(i,j)*(T1(i,j)-T0(i,j))/dt;
             end
         end
     end
@@ -722,28 +790,9 @@ for iloop=1:1:nloop
             P(i,j)=U(kpm)*Kcont;
         end
     end
-    if(t ==1)
-        P0 = P;
-    end
-    dPij = P-P0;
-    % A given absolute nodal temperature change limit.2
-    maxDPcurrent=max(max(abs(dPij)));
-    if(maxDPcurrent>DPmax)
-        dt=dt/maxDPcurrent*DPmax;
-    end
-    % Restrict the time step limiting max_marker_disp by 0.001 grid step
-    % Define dtm for transport of markers.
-    % Define displacement timestep dtm
-    dtm=dt;
-    maxvx=max(max(abs(vx)));
-    maxvy=max(max(abs(vy)));
-    if(dtm*maxvx>dxymax*dx)
-        dtm=dxymax*dx/maxvx;
-    end
-    if(dtm*maxvy>dxymax*dy)
-        dtm=dxymax*dy/maxvy;
-    end
-    
+    DVX = vx-vx0;
+    DVY = vy-vy0;
+
     EXY = zeros(Ny,Nx);
     SXY = zeros(Ny,Nx);
     DSXY = zeros(Ny,Nx);
@@ -751,11 +800,10 @@ for iloop=1:1:nloop
     for j = 1:1:Nx
         for i = 1:1:Ny
             %ETAVP = ETA,which plastic is absent.
-            EXY(i,j) = (1/2)*( (vx(i+1,j)-vx(i,j))/dy ...
-                             + (vy(i,j+1)-vy(i,j))/dx ) ;
+            EXY(i,j) = (1/2)*( (vx(i+1,j)-vx(i,j))/dy + (vy(i,j+1)-vy(i,j))/dx ) ;
             % srxy is strain rate,sxy is stressxy
-            SXY(i,j) = 2*ETAVP(i,j)*EXY(i,j)  * (GGG(i,j)*dtm/(GGG(i,j)*dtm+ETAVP(i,j))) ...
-                                  + SXY0(i,j) * (  ETAVP(i,j)/(GGG(i,j)*dtm+ETAVP(i,j)));
+            SXY(i,j) = 2*ETAVP(i,j)*EXY(i,j) *GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j)) ...
+                                  + SXY0(i,j) * (  ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j)));
             DSXY(i,j) = SXY(i,j) - SXY0(i,j);
         end
     end
@@ -765,43 +813,132 @@ for iloop=1:1:nloop
     EII = zeros(Ny1,Nx1);
     SII = zeros(Ny1,Nx1);
     DSXX = zeros(Ny1,Nx1);
+    DP = zeros(Ny1,Nx1);
     % Computing strain rate(xx) and deviatoric(xx) stress components.
     for j = 2:1:Nx
         for i = 2:1:Ny        
-            % Note that exx is not the 1/2 item in the book.
-            EXX(i,j) =  (vx(i,j)-vx(i,j-1))/dx;
+            % Note that EXX is not the 1/2 item in the chapter13 of book.
+            % Note that EXX is the 1/2 item in the chapter14 of book.
+            EXX(i,j) =  0.5*((vx(i,j)-vx(i,j-1))/dx-(vy(i,j)-vy(i-1,j))/dy);
             % srxx is strain rate,sxx is stressxx
-            SXX(i,j) = 2*ETAPVP(i,j)*EXX(i,j) * (GGGP(i,j)*dtm/(GGGP(i,j)*dtm+ETAPVP(i,j))) ...
-                                  + SXX0(i,j) * (  ETAPVP(i,j)/(GGGP(i,j)*dtm+ETAPVP(i,j)));
+            SXX(i,j) = 2*ETAPVP(i,j)*EXX(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j)) ...
+                                   + SXX0(i,j) * (  ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j)));
             DSXX(i,j) = SXX(i,j) - SXX0(i,j);
             % The second invariant value.
             EII(i,j) = ( EXX(i,j)^2 + ((EXY(i-1,j)   + EXY(i,j-1) ...
-                       + EXY(i-1,j-1) + EXY(i,j))/4)^2 )^0.5;
+                             + EXY(i-1,j-1) + EXY(i,j))/4)^2 )^0.5;
             SII(i,j) = ( SXX(i,j)^2 + ((SXY(i-1,j)   + SXY(i,j-1) ...
-                       + SXY(i-1,j-1) + SXY(i,j))/4)^2 )^0.5;
+                + SXY(i-1,j-1) + SXY(i,j))/4)^2 )^0.5;
+            DP(i,j) = P(i,j) - P0(i,j);
+                   
         end
     end
-    if(t==1)
-        SXX00 = SXX0;
-        SXY00 = SXY0;
+    
+    Hsij = zeros(Ny1,Nx1);
+    for j = 2:1:Nx
+        for i = 2:1:Ny   
+            pxyxy = (1/4)*( SXY(i,j)^2/ETAVP(i,j)   + SXY(i-1,j)^2/ETAVP(i-1,j)...
+                          + SXY(i,j-1)/ETAVP(i,j-1) + SXY(i-1,j-1)/ETAVP(i-1,j-1));
+            % Shear heating Hs
+            Hsij(i,j) = SXX(i,j)^2/ETAPVP(i,j)+ pxyxy;
+        end
     end
-    dSXXij = SXX - SXX00;
-    dSXYij = SXY - SXY00; 
-    % A given absolute nodal temperature change limit.2
-    maxDScurrentXX=max(max(abs(dSXXij)));
-    maxDScurrentXY=max(max(abs(dSXYij)));
-    maxDScurrent = max(maxDScurrentXX,maxDScurrentXY);
-    if(maxDScurrent>DSmax)
-        dt=dt/maxDScurrent*DSmax;
+    Haij = zeros(Ny1,Nx1);
+    % Adiabatic heating Ha
+    for j = 2:1:Nx
+        for i = 2:1:Ny
+%             kvy = ( vy(i,j)+vy(i-1,j) )/2;
+%             kvx = ( vx(i,j)+vx(i,j-1) )/2;
+%             Haij(i,j) = T0(i,j)*Aefij(i,j)*RHOP(i,j)*(gy*kvy+gx*kvx);
+                 Haij(i,j) = T0(i,j)*ALPHAP(i,j)*(P(i,j) - P0(i,j))/dt;
+        end
     end
+    % Solve temperature equation.
+
+    % Insulating boundary condition.
+    % Up and down
+    for j=1:1:Nx1
+        for i=1:1:Ny1
+            % Define global index in algebraic space
+            kt=(j-1)*Ny1+i;
+            % External points
+            if(i==1 || i==Ny1 || j==1 || j==Nx1)
+                % Boundary Condition
+                % Top BC: i
+                if(i==1 && j>1 && j<Nx1)
+                    coet(kt,kt)=1; % Left part
+                    coet(kt,kt+1)=-1; % Left part
+                    bt(kt)=0; % Right part
+                end
+                % Bottom BC: i
+                if(i==Ny1 && j>1 && j<Nx1)
+                    coet(kt,kt)=1; % Left part
+                    coet(kt,kt-1)=-1; % Left part
+                    bt(kt)=0; % Right part
+                end
+                % Left BC: i
+                if(j==1)
+                    coet(kt,kt)=1; % Left part
+                    coet(kt,kt+Ny1)=-1; % Left part
+                    bt(kt)=0; % Right part
+                end
+                % Right BC: i
+                if(j==Nx1)
+                    coet(kt,kt)=1; % Left part
+                    coet(kt,kt-Ny1)=-1; % Left part
+                    bt(kt)=0; % Right part
+                end
+            else
+                % Internal points: Temperature eq.
+                % Left part
+                % KVX == Kh;KVY == Kv
+                khij  = KVX(i,j);
+                khij1 = KVX(i,j-1);
+                kvij  = KVY(i,j);
+                kvi1j = KVY(i-1,j);
+                % Not 2* why?? page177
+                coet(kt, kt) = (khij+khij1)/dx^2+RHOPCP(i,j)/dt...
+                    +(kvij+kvi1j)/dy^2;% middle T3 i,j
+                coet(kt, kt-1) = -(kvi1j)/(2.*dy.^2); % up T2 i-1,j
+                coet(kt, kt+1) = -(kvij)/(2.*dy.^2); % down T4 i+1,j
+                coet(kt, kt-Ny1) = -(khij1)/(dx.^2); % left T1 i,j-1
+                coet(kt, kt+Ny1) = -(khij)/(dx.^2); % right T5 i,j+1
+                % !!!Note that there are not advection term because MIC have
+                % marker transport.!!!
+                % Adding H(P-nodes)
+                bt(kt, 1) = T0(i,j)*RHOPCP(i,j)/dt + Hrij(i,j) + Haij(i,j) + Hsij(i,j);
+            end
+        end
+    end
+    
+    % Direct method:right martix is divided by coe martix on the left
+    u = coet \ bt;
+    % transform vector to grids
+    % U has Ny1 rows and Nx1 columns
+    U = reshape(u, Ny1, Nx1);
+    T1 = U;
+    % Computing T1-T0 = dTi,j = dTi,j(subgrid) + dTi,j(remaining)
+    % Eq10.13
+    dTij = T1-T0;
+
     P(:,1)  = P(:,2);
     P(:,Nx1)= P(:,Nx);
     P(1,:)  = P(2,:);
     P(Ny1,:)= P(Ny,:);
+    P0(:,1)=P0(:,2);
+    P0(:,Nx1)=P0(:,Nx);
+    P0(1,:)=P0(2,:);
+    P0(Ny1,:)=P0(Ny,:);
     SXX(:,1)=SXX(:,2);
     SXX(:,Nx1)=SXX(:,Nx);
     SXX(1,:)=SXX(2,:);
     SXX(Ny1,:)=SXX(Ny,:);
+    SXX0(:,1)=SXX0(:,2);
+    SXX0(:,Nx1)=SXX0(:,Nx);
+    SXX0(1,:)=SXX0(2,:);
+    SXX0(Ny1,:)=SXX0(Ny,:);
+    
+    
     ETA5=ETA; % 传递老mius 而不是miusvp ，在每一次timestep
     YYN5=zeros(Ny,Nx);% 设置一个中间变量来传递“屈服标记矩阵”
     % "Update ETAVP(i,j)"
@@ -833,7 +970,7 @@ for iloop=1:1:nloop
                     ETA5(i,j) = ETAVPij; 
                     YYN5(i,j) = 1;
                     % 要注意在m13_2中的更新粘度有上下界
-                    minetavpm = min(etaweak,c*dt*gggweak);
+%                     minetavpm = min(etaweak,c*dt*gggweak);
                     if(ETA5(i,j)<minetavpm)
                         ETA5(i,j)=minetavpm;
                     elseif(ETA5(i,j)>maxetavpm)
@@ -870,39 +1007,116 @@ for iloop=1:1:nloop
     if(NIJPLAST>0)
         YIELDERRNODAL(iloop)=(DIJYIELD/NIJPLAST)^0.5;
     end
+    % Apply criteria for decreasing the timestep
+    yndt=0;
     
-    % Stop iteration
-    if(NIJPLAST==0 || iloop==nloop || YIELDERRNODAL(iloop)<yerrmax)
-        break;
-        % 达到3个条件之一则停止循环
-        % 1、没有达到屈服的node点（一般不会）；
-        % 2、达到100000次（一般不会）；
-        % 3、本次误差小于3e5（一般会）
+    % Define displacement timestep dtm
+    dtm=dt;
+    maxvx=max(max(abs(vx)));
+    maxvy=max(max(abs(vy)));
+    if(dtm*maxvx>dxymax*dx)
+        dtm=dxymax*dx/maxvx/dtkoefv;
+        yndt=1;
+    end
+    if(dtm*maxvy>dxymax*dy)
+        dtm=dxymax*dy/maxvy/dtkoefv;
+        yndt=1;
+    end
+    
+    % Apply maximal stress change condition
+    dts=dt;
+    maxDScurrent=max(max(max(abs(DSXX))),max(max(abs(DSXY))));
+    if(maxDScurrent>DSmax)
+        dts=dts/maxDScurrent*DSmax/dtkoefv;
+        yndt=1;
+    end
+    
+    % Apply pressure timestepping condition
+    dtp=dt;
+    maxDPcurrent=max(max(abs(DP)));
+    if(maxDPcurrent>DPmax)
+        dtp=dtp/maxDPcurrent*DPmax/dtkoefv;
+        yndt=1;
+    end
+    
+    % Apply thermal timestepping condition
+    dtt=dt;
+    maxDTcurrent=max(max(abs(dTij)));
+    if(maxDTcurrent>DTmax)
+        dtt=dtt/maxDTcurrent*DTmax/dtkoefv;
+        yndt=1;
+    end
+    
+    % Decrease computational timestep if too many iterations
+    dtpl=dt;
+    if(fix((icount+1)/dtstep)*dtstep==(icount+1))
+        % Decrease timestep
+        dtpl=dtpl/dtkoef;  % 达到200次循环后对dt进行缩减2倍
+        yndt=1;
+    end
+    
+    % Check if further dt reduction possible
+    if(dt<=dtmin)
+        yndt=0;
+    end
+    
+    % Reset dt, restart iteration
+    ynstop=0;
+    if(yndt>0)
+        % 如果T,M,P,LOOP,S的差异大于容许值则需要重置粘度使用老VP粘度
+        % 然后重新进行判断，并“重新迭代”
+        dt=max(dtmin,min([dtt, dtm, dts, dtpl, dtp]));
+        % Reset old viscoplastic viscosity, temperature
+        ETAVP=ETAVP00;
+        YYN=YYN00;
+        T1 = T0;
+    elseif(icount>0)
+        % 不更改dt时，只需对循环内(200次)的粘度进行更新，或达到截止条件时跳出iterations
+        % Check max P,T change between iterations
+        TEMERRNODAL(iloop)=max(max(abs(dTij-DT0)));
+        PREERRNODAL(iloop)=max(max(abs(DP-DP0)));
+        % Stop iteration
+        % 达到3个条件之一“并且T与P满足误差容许值”，则停止循环
+        % 1、没有达到屈服的node点（一般不会）开始的100左右timestep可能会；
+        % 2、达到最大迭代次数100000次（一般不会）；
+        % 3、本次屈服误差小于容许值3e5（一般会）
         % Repeat iteration（最大次数为100000/200次）
-    else
-        % 没有达到循环截止条件时：
-        % 1、如果循环为200次的整数倍，
-        %    那么dt/2，并且相当于重新迭代（1），
-        %    粘度使用当次timestep的老VP粘度与老屈服标志。
-        % 2、如果不是200次的整数倍（1*N-200*N之内）
-        %    那么使用新的VP粘度与新屈服标志。
-        % Decrease computational timestep if too many iterations
-        if(fix(iloop/dtstep)*dtstep==iloop)% reach to 200 times
-            % Decrease timestep
-            dt=dt/2;% dt/2
-            aaaa = 1;
-            % Reset old viscoplastic viscosity
-            ETAVP=ETAVP00;
-            YYN  =YYN00;
-        else
-            % Use new viscoplastic viscosity
+        if(TEMERRNODAL(iloop)<terrmax && PREERRNODAL(iloop)<perrmax && ...
+                (NIJPLAST==0 || iloop==nloop || YIELDERRNODAL(iloop)<yerrmax))
+            ynstop=1;
+            % Repeat iteration
+        elseif(NIJPLAST>0)
+            % 第N>2次循环时，如果有至少一个欧拉点满足12屈服条件，就要使用修正的的ETAVP值
             ETAVP=ETA5;
             YYN=YYN5;
         end
+    % 第一次循环时，如果有至少一个欧拉点满足12屈服条件，就要使用修正的的ETAVP值
+    elseif(NIJPLAST>0)
+        % Use new viscoplastic viscosity
+        ETAVP=ETA5;
+        YYN=YYN5;
     end
-
-% 结束循环
+    % Save Last DT and DP
+    DT0=dTij;
+    DP0=DP;
+    % 其实判断下面行的过程在每一个timestep只有一次
+    % 如果硬性5个差异条件至少有一个不满足容许误差或迭代条件达到200次时
+    % 才重置icount
+    % 否则只需对icount进行累加
+    % icount最大为199(此时重置并dt/2)，原因为dt太大，多次迭代仍不足以满足截止条件
+    if(yndt>0)
+        icount=0;
+    else
+        icount=icount+1;
+    end
+    % ynstop == 1意味着循环截止条件达到，此时只需跳出iterations
+    % 否则不跳出
+    if(ynstop>0)
+        break;
+    end
+    % End Plastic iterations on Nodes
 end
+
 
     for m = 1:marknum
         % Define i,j indexes for the upper left node
@@ -935,13 +1149,18 @@ end
                 etavpm(m)=etam(tm(m));
             end
         else
-            % 如果该次timestep迭代没有屈服欧拉点
+            % 如果该次timestep迭代中该m个marker对应的周围四个欧拉点没有屈服
             % 则不需要更新粘度只需使用最初粘度进入下一个timestep。
             etavpm(m)=etam(tm(m));    
-        end  
+        end
     end
-   
-    % Computing "STRESS" subgrid diffusion for markers
+    
+    % Reset displacement timestep
+    % 保证整个程序都使用相同的dt(dtm==dtT==dt)，粘度迭代修改后的dt。
+    dtm=dt;
+    %  This
+    
+    % Computing "STRESS" and "Pressure"subgrid diffusion for markers
     if (subgrdifcoes>0)
         % Existence of subgrid diffusion.
         % Page162 How to correct the problem ?
@@ -950,6 +1169,7 @@ end
         % P-NODES
         WPNODES = zeros(Ny1,Nx1);
         SXXSUM = zeros(Ny1,Nx1);
+        P0SUM = zeros(Ny1,Nx1);
         % Basic-NODES        
         WNODES = zeros(Ny,Nx);
         SXYSUM = zeros(Ny,Nx);
@@ -978,8 +1198,10 @@ end
             wtmij1=(dis_x/dx)*(1-dis_y/dy);
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-            sxxm0nodal= sxx(i,j)*wtmij + sxx(i+1,j)*wtmi1j  ...
-                +sxx(i,j+1)*wtmij1 + sxx(i+1,j+1)*wtmi1j1;
+            sxxm0nodal= SXX0(i,j)*wtmij + SXX0(i+1,j)*wtmi1j  ...
+                                     + SXX0(i,j+1)*wtmij1 + SXX0(i+1,j+1)*wtmi1j1;
+            p0mnodal = P0(i,j)*wtmij + P0(i+1,j)*wtmi1j  ...
+                                   +P0(i,j+1)*wtmij1 + P0(i+1,j+1)*wtmi1j1;
             j=fix((xm(m)-x(1))/dx)+1;
             i=fix((ym(m)-y(1))/dy)+1;
             if(j<1)
@@ -1001,11 +1223,12 @@ end
             wtmij1=(dis_x/dx)*(1-dis_y/dy);
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
-            sxym0nodal= sxy(i,j)*wtmij + sxy(i+1,j)*wtmi1j  ...
-                +sxy(i,j+1)*wtmij1 + sxy(i+1,j+1)*wtmi1j1;
+            sxym0nodal= SXY0(i,j)*wtmij + SXY0(i+1,j)*wtmi1j  ...
+                +SXY0(i,j+1)*wtmij1 + SXY0(i+1,j+1)*wtmi1j1;
             % NOTE THAT the answer is sxxm(m)-sxxm0nodal.
             % Eq.10.14
             dsxxm0 = sxxm0nodal - sxxm(m);
+            dp0m     = p0mnodal - p0m(m);
             dsxym0 = sxym0nodal - sxym(m);
             % Page209
             tdiff = etam(tm(m))/gggm(tm(m));
@@ -1015,11 +1238,13 @@ end
             sdif=-subgrdifcoes*dtm/tdiff;
             % Page162 Eq.10.16
             dsxxmsub=dsxxm0*(1-exp(sdif));
+            dp0msub = dp0m*(1-exp(sdif));
             dsxymsub=dsxym0*(1-exp(sdif));
 
             % Eq.10.19
             % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
             sxxm(m) = sxxm(m) + dsxxmsub;
+            p0m(m)  = p0m(m) + dp0msub;
             sxym(m) = sxym(m) + dsxymsub;
             % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
             % Eq.10.17
@@ -1045,18 +1270,22 @@ end
             wtmi1j1=(dis_x/dx)*(dis_y/dy);
             if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
                 SXXSUM(i,j) = SXXSUM(i,j) + dsxxmsub*wtmij;
+                P0SUM(i,j) = P0SUM(i,j) + dp0msub*wtmij;
                 WPNODES(i,j) = WPNODES(i,j) + wtmij;
             end
             if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
                 SXXSUM(i+1,j) = SXXSUM(i+1,j) + dsxxmsub*wtmi1j;
+                P0SUM(i+1,j) = P0SUM(i+1,j) + dp0msub*wtmi1j;
                 WPNODES(i+1,j) = WPNODES(i+1,j) + wtmi1j;
             end
             if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
                 SXXSUM(i,j+1) = SXXSUM(i,j+1) + dsxxmsub*wtmij1;
+                P0SUM(i,j+1) = P0SUM(i,j+1) + dp0msub*wtmij1;
                 WPNODES(i,j+1) = WPNODES(i,j+1) + wtmij1;
             end
             if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
                 SXXSUM(i+1,j+1) = SXXSUM(i+1,j+1) + dsxxmsub*wtmi1j1;
+                P0SUM(i+1,j+1) = P0SUM(i+1,j+1) + dp0msub*wtmi1j1;
                 WPNODES(i+1,j+1) = WPNODES(i+1,j+1) + wtmi1j1;
             end
             % Define i,j indexes for the upper left node
@@ -1098,12 +1327,14 @@ end
             end
         end
         dsxxijsub = zeros(Ny1,Nx1);
+        dp0ijsub = zeros(Ny1,Nx1);
         dsxyijsub = zeros(Ny,Nx);
         % P-NODES
         for j=2:1:Nx
             for i=2:1:Ny
                 if(WPNODES(i,j)>0)
                     dsxxijsub(i,j)=SXXSUM(i,j)/WPNODES(i,j);
+                    dp0ijsub(i,j) = P0SUM(i,j)/WPNODES(i,j);
                 end
             end
         end
@@ -1118,8 +1349,11 @@ end
         % Eq.10.18
         % Update dTij(dTij(remain) = dTij - dTij(sub)  )
         DSXX = DSXX - dsxxijsub;
+        DP = DP - dp0ijsub;
         DSXY = DSXY - dsxyijsub;
     end
+    
+    
     % Interpolate L-markers(dTremain) from P-node(dsxxijremain)
     for m = 1:1:marknum
         % Define i,j indexes for the upper left node
@@ -1145,9 +1379,13 @@ end
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
         dsxxmremain= DSXX(i,j)  *wtmij  + DSXX(i+1,j)   *wtmi1j  ...
-                   + DSXX(i,j+1)*wtmij1 + DSXX(i+1,j+1) *wtmi1j1;
+                                   + DSXX(i,j+1)*wtmij1 + DSXX(i+1,j+1) *wtmi1j1;
+        dp0mremain = DP(i,j)  *wtmij  + DP(i+1,j)   *wtmi1j  ...
+                                   + DP(i,j+1)*wtmij1 + DP(i+1,j+1) *wtmi1j1;
         % "NOTE THAT" this discard interpolation of new stress SXX. 
         sxxm(m) = sxxm(m) + dsxxmremain;
+        p0m(m) = p0m(m) + dp0mremain;
+        
         % Define i,j indexes for the upper left node
         j=fix((xm(m)-x(1))/dx)+1;
         i=fix((ym(m)-y(1))/dy)+1;
@@ -1171,130 +1409,248 @@ end
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
         dsxymremain=DSXY(i,j)  *wtmij  + DSXY(i+1,j)  *wtmi1j  ...
-                   +DSXY(i,j+1)*wtmij1 + DSXY(i+1,j+1)*wtmi1j1;
+                                    +DSXY(i,j+1)*wtmij1 + DSXY(i+1,j+1)*wtmi1j1;
         % Tcorrected = Tm0(Tm0+ dTsubgrid) + dTremain
         % Eq.10.19
         sxym(m) = sxym(m) + dsxymremain;
     end
     
-    Hsij = zeros(Ny1,Nx1);
-    for j = 2:1:Nx
-        for i = 2:1:Ny   
-            pxyxy = (1/4)*( SXY(i,j)^2/ETAVP(i,j)   + SXY(i-1,j)^2/ETAVP(i-1,j)...
-                          + SXY(i,j-1)/ETAVP(i,j-1) + SXY(i-1,j-1)/ETAVP(i-1,j-1));
-            % Shear heating Hs
-            Hsij(i,j) = SXX(i,j)^2/ETAPVP(i,j)+ pxyxy;
+    % Computing "Vx and Vy"subgrid diffusion for markers
+    if (subgrdifcoev>0)
+        % Vx-NODES
+        WVXNODES = zeros(Ny1,Nx1);
+        VXSUM = zeros(Ny1,Nx1);
+        % Basic-NODES        
+        WVYNODES = zeros(Ny,Nx);
+        VYSUM = zeros(Ny,Nx);
+        % Interpolate Tm0(nodal) from E-nodes(T0) to L-markers.
+        for m = 1:marknum
+            % Interpolate Vx to Vx-NODES(Nx*Ny1)
+            % Define i,j indexes for the upper left node
+            j=fix((xm(m)-xvx(1))/dx)+1;
+            i=fix((ym(m)-yvx(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx-1)
+                j=Nx-1;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny)
+                i=Ny;
+            end
+            % Compute distances
+            dis_x=xm(m)-xvx(j);
+            dis_y=ym(m)-yvx(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+            vx0mnodal= vx0(i,j)*wtmij + vx0(i+1,j)*wtmi1j  ...
+                                   + vx0(i,j+1)*wtmij1 + vx0(i+1,j+1)*wtmi1j1;
+            % Interpolate Vy to Vy-NODES(Nx1*Ny)
+            j=fix((xm(m)-xvy(1))/dx)+1;
+            i=fix((ym(m)-yvy(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx)
+                j=Nx;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny-1)
+                i=Ny-1;
+            end
+            % Compute distances
+            dis_x=xm(m)-xvy(j);
+            dis_y=ym(m)-yvy(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+            vy0mnodal= vy0(i,j)*wtmij + vy0(i+1,j)*wtmi1j  ...
+                +vy0(i,j+1)*wtmij1 + vy0(i+1,j+1)*wtmi1j1;
+            % NOTE THAT the answer is sxxm(m)-sxxm0nodal.
+            % Eq.10.14
+            dvx0m = vx0mnodal - vx0m(m);
+            dvy0m = vy0mnodal - vy0m(m);
+            % Page209
+            tdiff =rhom(tm(m))/(etavpm(m)*(2/dx^2+2/dy^2));
+            % Computing subgrid diffusion
+            sdif=-subgrdifcoev*dtm/tdiff;
+            % Page162 Eq.10.16
+            dvx0msub=dvx0m*(1-exp(sdif));
+            dvy0msub=dvy0m*(1-exp(sdif));
+
+            % Eq.10.19
+            % Tcorrected = Tm0 + dTsubgrid (+ dTremain)
+            vx0m(m) = vx0m(m) + dvx0msub;
+            vy0m(m) = vy0m(m) + dvy0msub;
+            
+            % Interpolate Basic node(dTijsub) from L-markers(dTmsub)
+            % Eq.10.17
+            j=fix((xm(m)-xvx(1))/dx)+1;
+            i=fix((ym(m)-yvx(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx-1)
+                j=Nx-1;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny)
+                i=Ny;
+            end
+            % Compute distances
+            dis_x=xm(m)-xvx(j);
+            dis_y=ym(m)-yvx(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
+                VXSUM(i,j) = VXSUM(i,j) + dvx0msub*rhom(m)*wtmij;
+                WVXNODES(i,j) = WVXNODES(i,j) + rhom(m)*wtmij;
+            end
+            if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
+                VXSUM(i+1,j) = VXSUM(i+1,j) + dvx0msub*rhom(m)*wtmi1j;
+                WVXNODES(i+1,j) = WVXNODES(i+1,j) + rhom(m)*wtmi1j;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
+                VXSUM(i,j+1) = VXSUM(i,j+1) + dvx0msub*rhom(m)*wtmij1;
+                WVXNODES(i,j+1) = WVXNODES(i,j+1) + rhom(m)*wtmij1;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
+                VXSUM(i+1,j+1) = VXSUM(i+1,j+1) + dvx0msub*rhom(m)*wtmi1j1;
+                WVXNODES(i+1,j+1) = WVXNODES(i+1,j+1) + rhom(m)*wtmi1j1;
+            end
+            % Define i,j indexes for the upper left node
+            j=fix((xm(m)-xvy(1))/dx)+1;
+            i=fix((ym(m)-yvy(1))/dy)+1;
+            if(j<1)
+                j=1;
+            elseif(j>Nx)
+                j=Nx;
+            end
+            if(i<1)
+                i=1;
+            elseif(i>Ny-1)
+                i=Ny-1;
+            end
+            % Compute distances
+            dis_x=xm(m)-xvy(j);
+            dis_y=ym(m)-yvy(i);
+            % Compute weights
+            wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+            wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+            wtmij1=(dis_x/dx)*(1-dis_y/dy);
+            wtmi1j1=(dis_x/dx)*(dis_y/dy);
+            if(dis_x/dx<=0.5 && dis_y/dy<=0.5)
+                VYSUM(i,j) = VYSUM(i,j) + dvy0msub*rhom(m)*wtmij;
+                WVYNODES(i,j) = WVYNODES(i,j) + rhom(m)*wtmij;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy<=0.5)
+                VYSUM(i+1,j) = VYSUM(i+1,j) + dvy0msub*rhom(m)*wtmi1j;
+                WVYNODES(i+1,j) = WVYNODES(i+1,j) + rhom(m)*wtmi1j;
+            end
+            if(dis_x/dx<=0.5 && dis_y/dy>=0.5)
+                VYSUM(i,j+1) = VYSUM(i,j+1) + dvy0msub*rhom(m)*wtmij1;
+                WVYNODES(i,j+1) = WVYNODES(i,j+1) + rhom(m)*wtmij1;
+            end
+            if(dis_x/dx>=0.5 && dis_y/dy>=0.5)
+                VYSUM(i+1,j+1) = VYSUM(i+1,j+1) + dvy0msub*rhom(m)*wtmi1j1;
+                WVYNODES(i+1,j+1) = WVYNODES(i+1,j+1) + rhom(m)*wtmi1j1;
+            end
         end
-    end
-    Haij = zeros(Ny1,Nx1);
-    % Adiabatic heating Ha
-    for j = 2:1:Nx
-        for i = 2:1:Ny
-%             kvy = ( vy(i,j)+vy(i-1,j) )/2;
-%             kvx = ( vx(i,j)+vx(i,j-1) )/2;
-%             Haij(i,j) = T0(i,j)*Aefij(i,j)*RHOP(i,j)*(gy*kvy+gx*kvx);
-                 Haij(i,j) = T0(i,j)*Aefij(i,j)*(P(i,j) - P0(i,j))/dt;
+        
+        dvxijsub = zeros(Ny1,Nx1);
+        dvyijsub = zeros(Ny1,Nx1);
+        % P-NODES
+        for j=2:1:Nx
+            for i=2:1:Ny
+                if(WVXNODES(i,j)>0)
+                    dvxijsub(i,j)=VXSUM(i,j)/WVXNODES(i,j);
+                end
+            end
         end
-    end
-    % Solve temperature equation.
-    % Preliminary dtm to define possible temperature changes.3
-    dtT = dtm;
-    dttsum = 0;
-    titer=1;
-    while(dttsum<dtm)
-        % Insulating boundary condition.
-        % Up and down
-        for j=1:1:Nx1
-            for i=1:1:Ny1
-                % Define global index in algebraic space
-                kt=(j-1)*Ny1+i;
-                % External points
-                if(i==1 || i==Ny1 || j==1 || j==Nx1)
-                    % Boundary Condition
-                    % Top BC: i
-                    if(i==1 && j>1 && j<Nx1)
-                        coet(kt,kt)=1; % Left part
-                        coet(kt,kt+1)=-1; % Left part
-                        bt(kt)=0; % Right part
-                    end
-                    % Bottom BC: i
-                    if(i==Ny1 && j>1 && j<Nx1)
-                        coet(kt,kt)=1; % Left part
-                        coet(kt,kt-1)=-1; % Left part
-                        bt(kt)=0; % Right part
-                    end
-                    % Left BC: i
-                    if(j==1)
-                        coet(kt,kt)=1; % Left part
-                        coet(kt,kt+Ny1)=-1; % Left part
-                        bt(kt)=0; % Right part
-                    end
-                    % Right BC: i
-                    if(j==Nx1)
-                        coet(kt,kt)=1; % Left part
-                        coet(kt,kt-Ny1)=-1; % Left part
-                        bt(kt)=0; % Right part
-                    end
-                else
-                    % Internal points: Temperature eq.
-                    % Left part
-                    % KVX == Kh;KVY == Kv
-                    khij  = KVX(i,j);
-                    khij1 = KVX(i,j-1);
-                    kvij  = KVY(i,j);
-                    kvi1j = KVY(i-1,j);
-                    % Not 2* why?? page177
-                    coet(kt, kt) = (khij+khij1)/dx^2+RHOPCP(i,j)/dtT...
-                                  +(kvij+kvi1j)/dy^2;% middle T3 i,j
-                    coet(kt, kt-1) = -(kvi1j)/(2.*dy.^2); % up T2 i-1,j
-                    coet(kt, kt+1) = -(kvij)/(2.*dy.^2); % down T4 i+1,j
-                    coet(kt, kt-Ny1) = -(khij1)/(dx.^2); % left T1 i,j-1
-                    coet(kt, kt+Ny1) = -(khij)/(dx.^2); % right T5 i,j+1
-                    % !!!Note that there are not advection term because MIC have
-                    % marker transport.!!!
-                    % Adding H(P-nodes)
-                    bt(kt, 1) = T0(i,j)*RHOPCP(i,j)/dtT + Hrij(i,j) + Haij(i,j) + Hsij(i,j);
+        % Basic nodes
+        for j=1:1:Nx
+            for i=1:1:Ny
+                if(WVYNODES(i,j)>0)
+                    dvyijsub(i,j) = VYSUM(i,j)/WVYNODES(i,j);
                 end
             end
         end
 
-        % Direct method:right martix is divided by coe martix on the left
-        u = coet \ bt;
-        % transform vector to grids
-        % U has Ny1 rows and Nx1 columns
-        U = reshape(u, Ny1, Nx1);
-        T1 = U;
-        % Computing T1-T0 = dTi,j = dTi,j(subgrid) + dTi,j(remaining)
-        % Eq10.13
-        dTij = T1-T0;
-        % Adjust dt for must condition:DTmax,and max number of iteration 
-        % is 2  
-        % Define dtT for temperature equation.
-        % dtT <= dtm(markers instead of stokes, visible in LINE-727)
-        if(titer == 1)
-            % A given absolute nodal temperature change limit.2
-            maxDTcurrent=max(max(abs(dTij)));
-            if(maxDTcurrent>DTmax)
-                dtT=dtT/maxDTcurrent*DTmax;
-            else
-                % (skip out loop(just one) while maxDTcurrent<DTmax so dtT = dtm)
-                dttsum=dttsum+dtT; % Update dttsum
-            end
-        else
-            % A given absolute time step limit.1!!!
-            % Maybe this is 3!Adjust dtT equal to an 1/integer(2,3,4...) multiple of dtm
-            dttsum=dttsum+dtT; % Update dttsum
-            % Adjust timestep (define dtT<=dtm/2 if maxDTcurrent>DTmax )
-            if(dtT>dtm-dttsum)
-                dtT=dtm-dttsum;
-            end
-        end
-        % Update iteration counter.
-        titer=titer+1; 
+        % Eq.10.18
+        % Update dTij(dTij(remain) = dTij - dTij(sub)  )
+        DVX = DVX - dvxijsub;
+        DVY = DVY - dvyijsub;
     end
-    % "NOTE" that tk0==tk1 in the answer.
-    dTij = T1-T0;
-    % Computing subgrid diffusion for markers
+    % Interpolate L-markers from Vx-node
+    for m = 1:1:marknum
+        % Define i,j indexes for the upper left node
+        j=fix((xm(m)-xvx(1))/dx)+1;
+        i=fix((ym(m)-yvx(1))/dy)+1;
+        if(j<1 )
+            j=1;
+        elseif(j>Nx-1)
+            j=Nx-1;
+        end
+        if(i<1)
+            i=1;
+        elseif(i>Ny)
+            i=Ny;
+        end
+        % Compute distances
+        dis_x=xm(m)-xvx(j);
+        dis_y=ym(m)-yvx(i);
+        % Compute weights
+        wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+        wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+        wtmij1=(dis_x/dx)*(1-dis_y/dy);
+        wtmi1j1=(dis_x/dx)*(dis_y/dy);
+        % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+        dvxmremain= DVX(i,j)  *wtmij  + DVX(i+1,j)   *wtmi1j  ...
+                                  + DVX(i,j+1)*wtmij1 + DVX(i+1,j+1) *wtmi1j1;
+        % "NOTE THAT" this discard interpolation of new stress SXX. 
+        vx0m(m) = vx0m(m) + dvxmremain;
+        
+        % Define i,j indexes for the upper left node
+        j=fix((xm(m)-xvy(1))/dx)+1;
+        i=fix((ym(m)-yvy(1))/dy)+1;
+        if(j<1)
+            j=1;
+        elseif(j>Nx)
+            j=Nx;
+        end
+        if(i<1)
+            i=1;
+        elseif(i>Ny-1)
+            i=Ny-1;
+        end
+        % Compute distances
+        dis_x=xm(m)-xvy(j);
+        dis_y=ym(m)-yvy(i);
+        % Compute weights
+        wtmij=(1-dis_x/dx)*(1-dis_y/dy);
+        wtmi1j=(1-dis_x/dx)*(dis_y/dy);
+        wtmij1=(dis_x/dx)*(1-dis_y/dy);
+        wtmi1j1=(dis_x/dx)*(dis_y/dy);
+        % Interpolate Basic node(Tm0nodal) from L-markers(T0i,j)
+        dvymremain=DVY(i,j)  *wtmij  + DVY(i+1,j)  *wtmi1j  ...
+                                  +DVY(i,j+1)*wtmij1 + DVY(i+1,j+1)*wtmi1j1;
+        % Tcorrected = Tm0(Tm0+ dTsubgrid) + dTremain
+        % Eq.10.19
+        vy0m(m) = vy0m(m) + dvymremain;
+    end
+    
+    % Computing "temperature"subgrid diffusion for markers
     if (subgrdifcoet>0)
         % Existence of subgrid diffusion.
         % Page162 How to correct the problem ?
@@ -1448,8 +1804,7 @@ end
     for j = 1:1:Nx
         for i = 1:1:Ny
             % Computing rotation value.
-            wyx(i,j) = (1/2)*( (vy(i,j+1)-vy(i,j))/dx ...
-                             - (vx(i+1,j)-vx(i,j))/dy ) ;
+            wyx(i,j) = 0.5*((vy(i,j+1)-vy(i,j))/dx-(vx(i+1,j)-vx(i,j))/dy);
         end
     end
 
@@ -1483,7 +1838,7 @@ end
         wtmi1j1=(dis_x/dx)*(dis_y/dy);
         % Compute vxm and vym velocity
         wm = wyx(i,j)*wtmij+wyx(i+1,j)*wtmi1j...
-           + wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
+                 + wyx(i,j+1)*wtmij1+wyx(i+1,j+1)*wtmi1j1;
         angleAB = wm*dtm;
         sxymnew = sxxm(m)*sin(2*angleAB)+sxym(m)*cos(2*angleAB);
         sxxmnew = sxxm(m)*cos(angleAB)^2 - sxxm(m)*sin(angleAB)^2-sxym(m)*sin(2*angleAB) ;
