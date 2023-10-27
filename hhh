@@ -1,0 +1,182 @@
+    % Composing global matrixes L(), R() for Navier-Stokes and continuity equations
+    for j=1:1:Nx1
+        for i=1:1:Ny1
+            % Define global indexes in algebraic space
+            kvx=((j-1)*Ny1+i-1)*3+1; % Vx
+            kvy=kvx+1; % Vy
+            kpm=kvx+2; % P
+            
+            % Vx equation External points
+            if(i==1 || i==Ny1 || j==1 || j==Nx || j==Nx1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(j==Nx1)
+                    coe(kvx,kvx)=1; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Left Boundary
+                if(j==1)
+                    coe(kvx,kvx)=1; % Left part
+                    b(kvx)=vxleft; % Right part
+                end
+                % Right Boundary
+                if(j==Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    b(kvx)=vxright; % Right part
+                end
+                % Top boundary
+                if(i==1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx+3)=bctop; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Top boundary
+                if(i==Ny1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx-3)=bcbottom; % Left part
+                    b(kvx)=0; % Right part
+                end
+            else
+                % Internal points: x-Navier-Stokes eq.
+                %            Vx2
+                %             |
+                %        Vy1  |  Vy3
+                %             |
+                %     Vx1-P1-Vx3-P2-Vx5
+                %             |
+                %        Vy2  |  Vy4
+                %             |
+                %            Vx4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i-1,j)*GGG(i-1,j)*dt/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i,j+1)*GGGP(i,j+1)*dt/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Old stresses
+                SXY1=SXY0(i-1,j)*ETAVP(i-1,j)/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SXX1=SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SXX2=SXX0(i,j+1)*ETAPVP(i,j+1)/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Density gradients
+                dRHOdx=(RHOVX(i,j+1)-RHOVX(i,j-1))/2/dx;
+                dRHOdy=(RHOVX(i+1,j)-RHOVX(i-1,j))/2/dy;
+                % Left part
+                coe(kvx,kvx-Ny1*3)=ETAP1/dx^2; % Vx1
+                coe(kvx,kvx-3)=ETA1/dy^2; % Vx2
+                coe(kvx,kvx)=-(ETAP1+ETAP2)/dx^2-...
+                    (ETA1+ETA2)/dy^2-...
+                    dRHOdx*gx*dt-RHOVX(i,j)/dt; % Vx3
+                coe(kvx,kvx+3)=ETA2/dy^2; % Vx4
+                coe(kvx,kvx+Ny1*3)=ETAP2/dx^2; % Vx5
+                
+                coe(kvx,kvy)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy2
+                coe(kvx,kvy+Ny1*3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy4
+                coe(kvx,kvy-3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy1
+                coe(kvx,kvy+Ny1*3-3)=ETAP2/dx/dy-ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy3
+                coe(kvx,kpm)=Kcont/dx; % P1
+                coe(kvx,kpm+Ny1*3)=-Kcont/dx; % P2
+                % Right part
+                b(kvx)=-RHOVX(i,j)*(gx+vx0(i,j)/dt)-(SXY2-SXY1)/dy-(SXX2-SXX1)/dx;
+            end
+            
+            % Vy equation External points
+            if(j==1 || j==Nx1 || i==1 || i==Ny || i==Ny1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(i==Ny1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Top boundary
+                if(i==1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=vytop; % Right part
+                end
+                % Bottom boundary
+                if(i==Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=vybottom; % Right part
+                end
+                % Left boundary
+                if(j==1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy+3*Ny1)=bcleft; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Right boundary
+                if(j==Nx1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy-3*Ny1)=bcright; % Left part
+                    b(kvy)=0; % Right part
+                end
+            else
+                % Internal points: y-Navier-Stokes eq.
+                %            Vy2
+                %             |
+                %         Vx1 P1 Vx3
+                %             |
+                %     Vy1----Vy3----Vy5
+                %             |
+                %         Vx2 P2 Vx4
+                %             |
+                %            Vy4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i,j-1)*GGG(i,j-1)*dt/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i+1,j)*GGGP(i+1,j)*dt/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Old stresses
+                SXY1=SXY0(i,j-1)*ETAVP(i,j-1)/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SYY1=-SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SYY2=-SXX0(i+1,j)*ETAPVP(i+1,j)/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Density gradients
+                dRHOdx=(RHOVY(i,j+1)-RHOVY(i,j-1))/2/dx;
+                dRHOdy=(RHOVY(i+1,j)-RHOVY(i-1,j))/2/dy;
+                % Left part
+                coe(kvy,kvy-Ny1*3)=ETA1/dx^2; % Vy1
+                coe(kvy,kvy-3)=ETAP1/dy^2; % Vy2
+                coe(kvy,kvy)=-(ETAP1+ETAP2)/dy^2-...
+                    (ETA1+ETA2)/dx^2-...
+                    dRHOdy*gy*dt-RHOVY(i,j)/dt; % Vy3
+                coe(kvy,kvy+3)=ETAP2/dy^2; % Vy4
+                coe(kvy,kvy+Ny1*3)=ETA2/dx^2; % Vy5
+                coe(kvy,kvx)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx3
+                coe(kvy,kvx+3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx4
+                coe(kvy,kvx-Ny1*3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx1
+                coe(kvy,kvx+3-Ny1*3)=ETAP2/dx/dy     - ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx2
+                coe(kvy,kpm)=Kcont/dy; % P1
+                coe(kvy,kpm+3)=-Kcont/dy; % P2
+                
+                % Right part
+                b(kvy)=-RHOVY(i,j)*(gy+vy0(i,j)/dt)-(SXY2-SXY1)/dx-(SYY2-SYY1)/dy;
+            end
+            
+            % P equation External points
+            if(i==1 || j==1 || i==Ny1 || j==Nx1)
+                % Boundary Condition
+                % 1*P=0
+                coe(kpm,kpm)=1; % Left part
+                b(kpm)=0; % Right part
+            else
+                % Internal points: compressible continuity eq.
+                % dVx/dx+dVy/dy+BETTA*DP/Dt=ALPHA*DT/Dt
+                %            Vy1
+                %             |
+                %        Vx1--P--Vx2
+                %             |
+                %            Vy2
+                %
+                % Left part
+                coe(kpm,kvx-Ny1*3)=-1/dx; % Vx1
+                coe(kpm,kvx)=1/dx; % Vx2
+                coe(kpm,kvy-3)=-1/dy; % Vy1
+                coe(kpm,kvy)=1/dy; % Vy2
+                coe(kpm,kpm)=Kcont*BEITAP(i,j)/dt; % P
+                % Right part
+                b(kpm)=BEITAP(i,j)*P0(i,j)/dt+ALPHAP(i,j)*(T1(i,j)-T0(i,j))/dt;
+            end
+        end
+    end
