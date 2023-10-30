@@ -1,10 +1,8 @@
 % "Adding inertia and comressiable to" global visco-elasto-plastic iterations on "Eulerian-NODE".
-% THE KEY OF PROGRAM：
-% LINE166,LINE488,LINE152-LINE160,LINE482-487,LINE753-LINE860
-% LOOPSTART491,LOOPEND862
-% 无论对欧拉点还是拉格朗日标记进行全局循环都会再次解stokes equ。
-% 但前者不需要在每次迭代重新更新标记特性，除非进入了下一个timestep。
-% adjust DTmax
+% Pay attention to changess of stokes,cintinuity and temperature equation
+% Right writing styles are p0m(m),vx0m(m) and vy0m(m) ,rather than XX(tm(m)).
+% The key of this program are 999-1106 LINES.
+
 clear all;clf;
 % Set parameters
 % Length of model
