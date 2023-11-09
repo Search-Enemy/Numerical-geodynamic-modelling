@@ -1,0 +1,800 @@
+% "Adding inertia and comressiable to" global visco-elasto-plastic iterations on "Eulerian-NODE".
+
+
+clear all;clf;
+% Set parameters
+% Length of model
+Lx = 150000; 
+Ly = 150000;
+x_mid = Lx/2;
+y_mid = Ly/2;
+% Sum of point number of model
+Nx = 101; 
+Ny = 101; 
+Nx1 = Nx+1;
+Ny1 = Ny+1;
+% Interval of E-staggered-nodes
+dx = Lx / (Nx-1);
+dy = Ly / (Ny-1);
+% Gravity acceleration
+gx = 0;
+gy = 0;
+% Basic nodes.
+x = 0:dx:Lx;
+y = 0:dy:Ly;
+% Vx staggered nodes.(Nx_node * Ny_node+1)
+xvx = 0:dx:Lx+dx;
+yvx = -dy/2 : dy : Ly+dy/2;
+% Vy staggered nodes.(Nx_node+1 * Ny_node)
+xvy = -dx/2 : dx : Lx+dx/2;
+yvy = 0:dy:Ly+dy;
+% P staggered nodes.(Nx_node+1 * Ny_node+1)
+xp =   -dx/2 : dx : Lx+dx/2;
+yp =   -dy/2 : dy : Ly+dy/2;
+
+% Stokes-equ and continuity-equ
+% Temperature-equ
+% Amount of markers.
+Nxm = 4*(Nx-1);
+Nym = 4*(Ny-1);
+marknum=Nxm*Nym;
+% Step-length among L-marker points
+dxm = Lx/Nxm;
+dym = Ly/Nym;
+% Marker points.
+
+% Parameters (Block     Fault       Buffers)
+rhom   = [2700   2700   2700     ]; % Density, kg/m^3
+etam   = [1e+23  1e+23  1e+23 ]; % Viscosity, Pa s
+beitam = [2e-11  2e-11  2e-11 ]; % Compressibility, 1/Pa
+gggm   = [3e+10  3e+10  3e+10 ]; % Shear Modulus, Pa
+cohesm = [0e5    0e5      0e5  ]; % Cohesion, Pa
+frict0m =  [0.2   0.2   0.2   ];
+% Parameters for rate- and state- friction (RSF)
+arsfm =   [0.011  0.011  0.011 ];% a
+brsfm =   [0.017  0.017  0.001 ]; % b
+lrsfm =   [0.010  0.010  0.010 ]; % L
+omm  =    [20     -1     -1    ]; % Cohesion, Pa  (State)
+V0=4e-9; % Reference slip velocity 
+DMIN=dx; % Min D-parameter
+DMAX=20000; % Max D-parameter (D:thickness of fault)
+KTHETA=1; % Eq15.31
+
+% Pressure BC
+PCONF=5e+6;
+
+% Velocity and Pressure matrix
+% Basic node
+ETAVP = etam(1)*ones(Ny,Nx);
+ETA = etam(1)*ones(Ny,Nx);
+GGG =gggm(1)*ones(Ny,Nx);
+COSHE = cohesm(1)*ones(Ny,Nx);
+FRICT0 = frict0m(1)*ones(Ny,Nx);
+
+OM0 = omm(1)*ones(Ny,Nx);
+OM = omm(1)*ones(Ny,Nx);
+ARSF=arsfm(1)*ones(Ny,Nx); % a-parameter of RSF
+BRSF=brsfm(1)*ones(Ny,Nx); % b-parameter of RSF
+LRSF=lrsfm(1)*ones(Ny,Nx); % L-parameter of RSF
+VPRSF=zeros(Ny,Nx); % Slip velocity of RSF
+YYN=zeros(Ny,Nx); % Plastic yielding mark, 1=yes,0=no
+EXY=zeros(Ny,Nx); % EPSILONxy, 1/s
+SXY=zeros(Ny,Nx); % SIGMAxy, 1/s
+SXY0=zeros(Ny,Nx); % SIGMA0xy, 1/s
+% Vx NODE
+RHOVX=rhom(1)*ones(Ny1,Nx1); % Density, kg/m^3
+vx=zeros(Ny1,Nx1); % vx-velocity m/s
+vx0=zeros(Ny1,Nx1); % Old vx-velocity m/s
+% Vy NODE
+RHOVY=rhom(1)*ones(Ny1,Nx1); % Density, kg/m^3
+vy=zeros(Ny1,Nx1); % vy-velocity m/s
+vy0=zeros(Ny1,Nx1); % Old vy-velocity m/s
+% P NODE
+BETTA=beitam(1)*ones(Ny1,Nx1); % Compressibility, 1/Pa
+ETAPVP=etam(1)*ones(Ny1,Nx1); % Viscosity, Pa*s
+GGGP=gggm(1)*ones(Ny1,Nx1); % Shear modulus, Pa
+EXX=zeros(Ny,Nx); % EPSILONxx, 1/s
+SXX=zeros(Ny,Nx); % SIGMA'xx, 1/s
+SXX0=zeros(Ny,Nx); % SIGMA0'xx, 1/s
+pvx=zeros(Ny1,Nx1); % Vx in pressure nodes, m/s
+pvy=zeros(Ny1,Nx1); % Vy in pressure nodes, m/s
+P=PCONF*ones(Ny1,Nx1); % Pressure, Pa
+P0=PCONF*ones(Ny1,Nx1); % Old pressure, Pa
+
+
+% Define matrix for Stokes
+unknowns = Nx1*Ny1*3;
+b  =   zeros(unknowns, 1);
+coe = sparse(unknowns,unknowns);
+
+% Define Fault
+% 这应该是作者定义的一个初始断层模型。
+for j=1:1:Nx
+    for i=1:1:Ny
+        OM0(i,j)=2+log(DMAX/lrsfm(1))-1*exp(-0.5*((y(i)-Ly/2)/10000)^2);
+    end
+end
+OM=OM0;
+         
+% Boundary condition : free slip = -1 ; no slip = 1
+bcleft   = 1;
+bcright  = 1;
+bctop    = 1;
+bcbottom = 1;
+% Extension/shortening velocities
+strainrate=1e-13; % Shortening strain rate
+vxtop=2e-9;%strainrate*xsize/2;
+vxbottom=-2e-9;%-strainrate*xsize/2;
+
+% BC of Vy only need constant == 0;
+% vytop=-strainrate*Ly/2;
+% vybottom=strainrate*Ly/2;
+% In fact, bc of veloity is unchanged.
+% Define dt for stokes equation.
+% 第一次的dt是大的，然后自适应为小的
+dtelastic = 1e+8; % initial timestep
+dt = dtelastic;
+dtmin = 1e-6;
+dtkoefv=1.1; % Koefficient to decrese dt for P,T,vx,vy,SIGMA limits 
+dtkoef=2; % Koefficient to decrese dt in case of no convergence
+dtkoefup=1.1; % 达到更改dt(dt/2)的循环迭代次数后，逐渐增加dt(1.1)但不会超过dtelastic
+% 此处缩减10倍(200-->20)
+dtstep=20; % Number of iterations before changing dt
+dxymax   = 0.002;
+% "每一个时间步长，而不是每一个迭代"   ？？？下面数值从何而来
+% 没有了T相关
+% DTmax=20; % max temperature change per iteration step, K
+DPmax = 1e9; % max pressure change per iteration step, Pa
+DSmax = 1e9; % max stress change per time step.
+% 多了Ω状态参量（无维度）
+DOMmax=0.2; % Max change in RSF state
+timesum = 0;
+minetavpm = 1e-3;
+maxetavpm = 1e+26;
+nloop=100000;
+ visstep = 10;
+yerrmax =  1e1;% Tolerance level for yielding error, Pa
+perrmax=3e+4; % Tolerance level for pressure error, Pa，下面三行是对应的存储数组
+YIELDERRNODAL=zeros(1,nloop);
+PREERRNODAL = zeros(1,nloop);
+% 400-->500
+Nt = 100000;
+dt00=dt*1.1;
+c = 1e-9;  % empirical coefficent
+t = 1;
+for t = t:1:Nt     
+    
+    
+    % 假设第一次循环时，必定不会满足容许误差限，所以dt/2
+    % 然后在之后的每一个timestep 都要逐渐增加dt,但不会超过5e7.
+    if(dt>=dt00)
+        dt=min(dt*dtkoefup,dtelastic);
+    end
+    dt00=dt;
+    % Set initial viscoplastic viscosity
+    
+    % 传递（old）YNN（屈服标记）与ETAVP（miusvp）
+    YYN00 = YYN;
+    ETAVP00 = ETAVP;% ETAVP at "every timestep" instead of "every loop(200)"
+    OM = OM0;
+    % 定义达到改变dt的临界迭代次数(200)变量
+    icount = 0;
+    % Mechanical Solution
+for iloop=1:1:nloop
+        
+    % etaweak == etamin;gggweak == gggmin
+    NSetavpmin=max(minetavpm, dt*min(min(GGG))*c);%???      max???
+    % Limit viscosity in the basic nodes
+    for i=1:1:Ny
+        for j=1:1:Nx
+            if(ETAVP(i,j)>ETA(i,j))
+                ETAVP(i,j)=ETA(i,j);
+            end
+            if(ETAVP(i,j)<NSetavpmin)
+                ETAVP(i,j)=NSetavpmin;
+            end
+        end
+    end
+    Kcont  = NSetavpmin/dx;   
+    % ETAPVP was only computed at this.
+    for i=2:1:Ny
+        for j=2:1:Nx
+            ETAPVP(i,j)=1/((1/ETAVP(i-1,j-1)+1/ETAVP(i,j-1)+1/ETAVP(i-1,j)+1/ETAVP(i,j))/4);
+        end
+    end
+    % Composing global matrixes L(), R() for Navier-Stokes and continuity equations
+    for j=1:1:Nx1
+        for i=1:1:Ny1
+            % Define global indexes in algebraic space
+            kvx=((j-1)*Ny1+i-1)*3+1; % Vx
+            kvy=kvx+1; % Vy
+            kpm=kvx+2; % P
+            
+            % Vx equation External points
+            if(i==1 || i==Ny1 || j==1 || j==Nx || j==Nx1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(j==Nx1)
+                    coe(kvx,kvx)=1; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Left Boundary
+                if(j==1)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx+Ny1*3)=-1; % 1 == 2
+                    b(kvx)=0; % Right part
+                end
+                % Right Boundary
+                if(j==Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx-Ny1*3)=-1; % Nx ==Nx-1
+                    b(kvx)=0; % Right part
+                end
+                % Top boundary
+                if(i==1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx+3)=bctop; % Left part
+                    b(kvx)=2*vxtop; % Right part
+                end
+                % Top boundary
+                if(i==Ny1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx-3)=bcbottom; % Left part
+                    b(kvx)=2*vxbottom; % Right part
+                end
+            else
+                % Internal points: x-Navier-Stokes eq.
+                %            Vx2
+                %             |
+                %        Vy1  |  Vy3
+                %             |
+                %     Vx1-P1-Vx3-P2-Vx5
+                %             |
+                %        Vy2  |  Vy4
+                %             |
+                %            Vx4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i-1,j)*GGG(i-1,j)*dt/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i,j+1)*GGGP(i,j+1)*dt/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Old stresses
+                SXY1=SXY0(i-1,j)*ETAVP(i-1,j)/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SXX1=SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SXX2=SXX0(i,j+1)*ETAPVP(i,j+1)/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Density gradients
+                dRHOdx=(RHOVX(i,j+1)-RHOVX(i,j-1))/2/dx;
+                dRHOdy=(RHOVX(i+1,j)-RHOVX(i-1,j))/2/dy;
+                % Left part
+                coe(kvx,kvx-Ny1*3)=ETAP1/dx^2; % Vx1
+                coe(kvx,kvx-3)=ETA1/dy^2; % Vx2
+                coe(kvx,kvx)=-(ETAP1+ETAP2)/dx^2-...
+                    (ETA1+ETA2)/dy^2-...
+                    dRHOdx*gx*dt-RHOVX(i,j)/dt; % Vx3
+                coe(kvx,kvx+3)=ETA2/dy^2; % Vx4
+                coe(kvx,kvx+Ny1*3)=ETAP2/dx^2; % Vx5
+                
+                coe(kvx,kvy)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy2
+                coe(kvx,kvy+Ny1*3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy4
+                coe(kvx,kvy-3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy1
+                coe(kvx,kvy+Ny1*3-3)=ETAP2/dx/dy-ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy3
+                coe(kvx,kpm)=Kcont/dx; % P1
+                coe(kvx,kpm+Ny1*3)=-Kcont/dx; % P2
+                % Right part
+                b(kvx)=-RHOVX(i,j)*(gx+vx0(i,j)/dt)-(SXY2-SXY1)/dy-(SXX2-SXX1)/dx;
+            end
+            
+            % Vy equation External points
+            if(j==1 || j==Nx1 || i==1 || i==Ny || i==Ny1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(i==Ny1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Top boundary
+                if(i==1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Bottom boundary
+                if(i==Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Left boundary
+                if(j==1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy+3*Ny1)=bcleft; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Right boundary
+                if(j==Nx1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy-3*Ny1)=bcright; % Left part
+                    b(kvy)=0; % Right part
+                end
+            else
+                % Internal points: y-Navier-Stokes eq.
+                %            Vy2
+                %             |
+                %         Vx1 P1 Vx3
+                %             |
+                %     Vy1----Vy3----Vy5
+                %             |
+                %         Vx2 P2 Vx4
+                %             |
+                %            Vy4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i,j-1)*GGG(i,j-1)*dt/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i+1,j)*GGGP(i+1,j)*dt/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Old stresses
+                SXY1=SXY0(i,j-1)*ETAVP(i,j-1)/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SYY1=-SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SYY2=-SXX0(i+1,j)*ETAPVP(i+1,j)/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Density gradients
+                dRHOdx=(RHOVY(i,j+1)-RHOVY(i,j-1))/2/dx;
+                dRHOdy=(RHOVY(i+1,j)-RHOVY(i-1,j))/2/dy;
+                % Left part
+                coe(kvy,kvy-Ny1*3)=ETA1/dx^2; % Vy1
+                coe(kvy,kvy-3)=ETAP1/dy^2; % Vy2
+                coe(kvy,kvy)=-(ETAP1+ETAP2)/dy^2-...
+                    (ETA1+ETA2)/dx^2-...
+                    dRHOdy*gy*dt-RHOVY(i,j)/dt; % Vy3
+                coe(kvy,kvy+3)=ETAP2/dy^2; % Vy4
+                coe(kvy,kvy+Ny1*3)=ETA2/dx^2; % Vy5
+                coe(kvy,kvx)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx3
+                coe(kvy,kvx+3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx4
+                coe(kvy,kvx-Ny1*3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx1
+                coe(kvy,kvx+3-Ny1*3)=ETAP2/dx/dy     - ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx2
+                coe(kvy,kpm)=Kcont/dy; % P1
+                coe(kvy,kpm+3)=-Kcont/dy; % P2
+                
+                % Right part
+                b(kvy)=-RHOVY(i,j)*(gy+vy0(i,j)/dt)-(SXY2-SXY1)/dx-(SYY2-SYY1)/dy;
+            end
+            
+            % P equation External points
+            if(i==1 || j==1 || i==Ny1 || j==Nx1)
+                % Boundary Condition
+                % 1*P=0
+                coe(kpm,kpm)=1; % Left part
+                b(kpm)=0; % Right part
+            else
+                % Internal points: compressible continuity eq.
+                % dVx/dx+dVy/dy+BETTA*DP/Dt=ALPHA*DT/Dt
+                %            Vy1
+                %             |
+                %        Vx1--P--Vx2
+                %             |
+                %            Vy2
+                %
+                % Left part
+                coe(kpm,kvx-Ny1*3)=-1/dx; % Vx1
+                coe(kpm,kvx)=1/dx; % Vx2
+                coe(kpm,kvy-3)=-1/dy; % Vy1
+                coe(kpm,kvy)=1/dy; % Vy2
+                coe(kpm,kpm)=Kcont*BETTA(i,j)/dt; % P
+                % Right part
+                b(kpm)=BETTA(i,j)*P0(i,j)/dt;
+            end
+        end
+    end
+    % Computing the solution U:include vx,vy and p
+    Us = coe \ b;
+    % Decompose the solution of global matrix. 
+    for j=1:1:Nx1
+        for i=1:1:Ny1
+            % Define global indexes in algebraic space
+            kvx=((j-1)*Ny1+i-1)*3+1; % Vx
+            kvy=kvx+1; % Vy
+            kpm=kvx+2; % P
+            % Reload solution
+            vx(i,j)=Us(kvx);
+            vy(i,j)=Us(kvy);
+            P(i,j)=Us(kpm)*Kcont;
+        end
+    end
+    DVX = vx-vx0;
+    DVY = vy-vy0;
+
+    EXY = zeros(Ny,Nx);
+    SXY = zeros(Ny,Nx);
+    DSXY = zeros(Ny,Nx);
+    % Computing strain rate(xy) and deviatoric(xy) stress components.
+    for j = 1:1:Nx
+        for i = 1:1:Ny
+            %ETAVP = ETA,which plastic is absent.
+            EXY(i,j)=0.5*((vx(i+1,j)-vx(i,j))/dy+...
+                (vy(i,j+1)-vy(i,j))/dx);
+            % srxy is strain rate,sxy is stressxy
+            SXY(i,j)=2*ETAVP(i,j)*EXY(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j))+...
+                SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+            DSXY(i,j)=SXY(i,j)-SXY0(i,j);
+        end
+    end
+    % Define second invariant value of stress and strain rate.
+    EXX = zeros(Ny1,Nx1);
+    SXX = zeros(Ny1,Nx1);
+    EII = zeros(Ny1,Nx1);
+    SII = zeros(Ny1,Nx1);
+    DSXX = zeros(Ny1,Nx1);
+    DP = zeros(Ny1,Nx1);
+    % Computing strain rate(xx) and deviatoric(xx) stress components.
+    for j = 2:1:Nx
+        for i = 2:1:Ny        
+            % Note that EXX is not the 1/2 item in the chapter13 of book.
+            % Note that EXX is the 1/2 item in the chapter14 of book.
+            EXX(i,j)=0.5*((vx(i,j)-vx(i,j-1))/dx-(vy(i,j)-vy(i-1,j))/dy);
+            % srxx is strain rate,sxx is stressxx
+            SXX(i,j)=2*ETAPVP(i,j)*EXX(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j))+...
+                SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+            DSXX(i,j)=SXX(i,j)-SXX0(i,j);
+            % The second invariant value.
+            EII(i,j)=(EXX(i,j)^2+((EXY(i,j)+EXY(i-1,j)+...
+                EXY(i,j-1)+EXY(i-1,j-1))/4)^2)^0.5;
+            SII(i,j)=(SXX(i,j)^2+((SXY(i,j)+SXY(i-1,j)+...
+                SXY(i,j-1)+SXY(i-1,j-1))/4)^2)^0.5;
+            DP(i,j)=P(i,j)-P0(i,j);
+                   
+        end
+    end
+
+
+% Insulting boundary.
+
+    P(:,1)  = P(:,2);
+    P(:,Nx1)= P(:,Nx);
+    P(1,:)  = P(2,:);
+    P(Ny1,:)= P(Ny,:);
+    P0(:,1)=P0(:,2);
+    P0(:,Nx1)=P0(:,Nx);
+    P0(1,:)=P0(2,:);
+    P0(Ny1,:)=P0(Ny,:);
+    SXX(:,1)=SXX(:,2);
+    SXX(:,Nx1)=SXX(:,Nx);
+    SXX(1,:)=SXX(2,:);
+    SXX(Ny1,:)=SXX(Ny,:);
+    SXX0(:,1)=SXX0(:,2);
+    SXX0(:,Nx1)=SXX0(:,Nx);
+    SXX0(1,:)=SXX0(2,:);
+    SXX0(Ny1,:)=SXX0(Ny,:);
+    
+    
+    ETA5=ETA; % 传递老mius 而不是miusvp ，在每一次timestep
+    YYN5=zeros(Ny,Nx);% 设置一个中间变量来传递“屈服标记矩阵”
+    OM5=OM;
+    % "Update ETAVP(i,j)"
+    DIJYIELD = 0;
+    NIJPLAST = 0;
+    dtrobert=dt;
+    dtlapusta=dt;
+    % Iterate over BASIC-NODE.
+    for j = 1:Nx
+        for i = 1:Ny
+            SIIB = (SXY(i,j)^2 + (1/16)*(SXX(i,j)+SXX(i+1,j)+SXX(i,j+1)+SXX(i+1,j+1))^2)^0.5;
+            % "NOTE THAT" 13.50 is different with below line.
+            PB = (P(i,j)+P(i+1,j)+P(i,j+1)+P(i+1,j+1))/4;
+            % 这里为什么不用OM0？？Eq15.23-15.24
+            Vp = 2*V0*sinh( max(SIIB-COSHE(i,j),0)/ARSF(i,j)/PB )*exp( -( BRSF(i,j)*OM(i,j)+FRICT0(i,j) )/ARSF(i,j) );
+            % 记录Vp
+            VPRSF(i,j) = Vp;
+            % log 是自然指数对数
+            if( Vp*dt/LRSF(i,j)<=1e-6 )
+                OM5(i,j) = log( exp(OM0(i,j)) * ( 1-Vp*dt/LRSF(i,j) ) + V0*dt/LRSF(i,j) );
+            elseif(Vp*dt/LRSF(i,j)>1e-6 )
+                OM5(i,j) = log( V0/Vp + ( exp(OM0(i,j))- V0/Vp )*exp(-Vp*dt/LRSF(i,j)) );
+            end
+            syieldij=COSHE(i,j)+PB*ARSF(i,j)*asinh(Vp/2/V0*...
+                          exp((BRSF(i,j)*OM5(i,j)+FRICT0(i,j))/ARSF(i,j)));
+            THETA=exp(OM5(i,j))*LRSF(i,j)/V0;
+            D=min(DMAX,max(DMIN,KTHETA*THETA*V0));
+            srIIplastic =  Vp/(2*D);
+            etapl=ETA(i,j)*syieldij/(2*ETA(i,j)*srIIplastic+syieldij);
+            
+            % Timestep criterion, Lapusta et al., 2000; Lapusta and Liu, 2009
+            % Bulk modulus
+            B=1/((BETTA(i,j)+BETTA(i+1,j)+BETTA(i,j+1)+BETTA(i+1,j+1))/4);
+            % Kinematic viscosity coefficient
+            vi=(3*B-2*GGG(i,j))/(6*B+2*GGG(i,j));
+            % Middle coefficient
+            K=2/pi*GGG(i,j)/(1-vi)/dx;
+            % 
+            kexi=1/4*(K*LRSF(i,j)/ARSF(i,j)/PB-(BRSF(i,j)-...
+                ARSF(i,j))/ARSF(i,j))^2-K*LRSF(i,j)/ARSF(i,j)/PB;
+            % xi == kexi
+            if(kexi<0)
+                dTETAmax=min(1-(BRSF(i,j)-ARSF(i,j))*PB/(K*LRSF(i,j)),0.2);
+            else
+                dTETAmax=min(ARSF(i,j)*PB/(K*LRSF(i,j)-(BRSF(i,j)-ARSF(i,j))*PB),0.2);
+            end
+            % "dtw"
+            dtlapusta=min(dtlapusta,dTETAmax*LRSF(i,j)/Vp);
+            % 这里直接用的Xstate_max == 0.2 ，而不是Xstate（dTETAmax）???
+            % "dth"
+            dtrobert=min(dtrobert,DOMmax*min(LRSF(i,j)/Vp,LRSF(i,j)/V0*exp(OM(i,j))));
+
+            % 这里的意思是所有欧拉点都屈服了
+            
+            % Update error for old yielding nodes
+            ynij=0;
+            if(YYN(i,j)>0)
+                ynij = 1;     %如果老欧拉点屈服，表明满足应力与粘度条件，则ynij=1
+                NIJPLAST = NIJPLAST + 1;
+                DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+            end
+            % Recompute nodal visocity
+            ETA5(i,j)=etapl;
+            % Mark yielding nodes
+            YYN5(i,j)=1;
+            % Apply viscosity cutoff values
+            if(ETA5(i,j)<minetavpm)
+                ETA5(i,j)=minetavpm;
+            elseif(ETA5(i,j)>maxetavpm)
+                ETA5(i,j)=maxetavpm;
+            end
+            % Update Error for new yielding nodes
+            if(ynij==0)
+                NIJPLAST = NIJPLAST + 1;
+                DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+            end
+        end
+    end
+    
+    % Compute yielding error for markers
+    if(NIJPLAST>0)
+        YIELDERRNODAL(iloop)=(DIJYIELD/NIJPLAST)^0.5;
+    end
+%                
+%             % Check whather each marker has been checked.0 is no,1 is yes.
+%             ynij = 0;%首先假定每一个欧拉点都不屈服
+%             % By default, each marker is subject to stress conditions???
+%             if(YYN(i,j) > 0)
+%                 ynij = 1;%如果老欧拉点屈服，表明满足应力与粘度条件ynij=1
+%                 NIJPLAST = NIJPLAST + 1;
+%                 DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+%             end
+%             % ETAVP(i,j) = ETA(i,j);
+%             if(syieldij<siielaij)
+%                 % 满足应力屈服条件则更新粘度miuvp
+%                 ETAVPij = GGG(i,j)*dt*syieldij/(siielaij-syieldij);
+%                 if(ETAVPij < ETA(i,j))                
+%                     % 满足应力与粘度条件则应用于下一次循环，并且标记屈服1于此欧拉点
+%                     % 否则该欧拉点保持原来粘度。
+%                     ETA5(i,j) = ETAVPij; 
+%                     YYN5(i,j) = 1;
+%                     % 要注意在m13_2中的更新粘度有上下界
+%                     %  minetavpm = min(etaweak,c*dt*gggweak);
+%                     if(ETA5(i,j)<minetavpm)
+%                         ETA5(i,j)=minetavpm;
+%                     elseif(ETA5(i,j)>maxetavpm)
+%                         ETA5(i,j)=maxetavpm;
+%                     end
+%                     if(ynij ==0 )
+%                         % 如果该欧拉点是之前不屈服，经过修正后屈服的
+%                         % 如果欧拉点之前屈服，经过修正后仍然屈服的不进行累计                         
+%                         NIJPLAST = NIJPLAST + 1;
+%                         DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+%                         % 或者说：
+%                         % ynij = 1的即已经计算误差并累计的此处不再计算
+%                         % 并且以前不屈服的，现在屈服了进行累计。
+%                         % 排除掉以前屈服的现在也屈服的，也就是说不对其进行累计。
+%                     end
+%                 else
+%                     % 如果满足应力条件但不满足粘度条件则不更新粘度
+%                     % 使用老粘度mius以及屈服标记0
+%                     ETA5(i,j) =ETA(i,j);
+%                     YYN5(i,j) = 0;
+%                 end
+%                 % Setoff tolerance level.
+%             else
+%                 % 如不满足应力条件则也不更新粘度；
+%                 % 使用老粘度mius以及屈服标记0
+%                 ETA5(i,j) = ETA(i,j);
+%                 YYN5(i,j) = 0;
+%             end
+%         end
+%     end
+% Apply criteria for decreasing the timestep
+    yndt=0;
+    % Define displacement timestep dtm
+    dtm=dt;
+    maxvx=max(max(abs(vx)));
+    maxvy=max(max(abs(vy)));
+    if(dtm*maxvx>dxymax*dx)
+        dtm=dxymax*dx/maxvx/dtkoefv;
+        yndt=1;
+    end
+    if(dtm*maxvy>dxymax*dy)
+        dtm=dxymax*dy/maxvy/dtkoefv;
+        yndt=1;
+    end
+    % Apply maximal stress change condition
+    dts=dt;
+    maxDScurrent=max(max(max(abs(DSXX))),max(max(abs(DSXY))));
+    if(maxDScurrent>DSmax)
+        dts=dts/maxDScurrent*DSmax/dtkoefv;
+        yndt=1;
+    end
+    % Apply pressure timestepping condition
+    dtp=dt;
+    maxDPcurrent=max(max(abs(DP)));
+    if(maxDPcurrent>DPmax)
+        dtp=dtp/maxDPcurrent*DPmax/dtkoefv;
+        yndt=1;
+    end
+    % Apply state variable timestepping condition
+    dtom=dt;
+    maxDOMcurrent=max(max(abs(OM-OM0)));
+    if(maxDOMcurrent>DOMmax)
+        dtom=dtom/maxDOMcurrent*DOMmax/dtkoefv;
+        yndt=1;
+    end
+    if(dtrobert<dt)
+        % diff  ??????
+        diff=dtrobert-dtlapusta;
+        yndt=1;
+        dtrobert=dtrobert/dtkoefv;
+    end
+    if(dtlapusta<dt)
+        yndt=1;
+        dtlapusta=dtlapusta/dtkoefv;
+    end
+    % Decrease computational timestep if too many iterations
+    dtpl=dt;
+    if(fix((icount+1)/dtstep)*dtstep==(icount+1))
+        % Decrease timestep
+        dtpl=dtpl/dtkoef;
+        yndt=1;
+    end
+    % Check if further dt reduction possible
+    if(dt<=dtmin)
+        yndt=0;
+    end
+    ynstop=0;
+    
+    if(yndt>0)
+        dt=max(dtmin,min([dtm, dts, dtpl, dtom, dtrobert, dtlapusta, dtp]));
+        % Reset old viscoplastic viscosity, temperature
+        ETA=ETAVP00;
+        YYN=YYN00;
+        OM=OM0;
+    elseif(icount>0)
+        % Check max P change between iterations
+        PREERRNODAL(iloop)=max(max(abs(DP-DP0)));
+        % Stop iteration
+        if(PREERRNODAL(iloop)<perrmax && ...
+                (NIJPLAST==0 || iloop==nloop || YIELDERRNODAL(iloop)<yerrmax))
+            ynstop=1;
+            % Repeat iteration
+        elseif(NIJPLAST>0)
+            % Use new viscoplastic viscosity
+            ETAVP=ETA5;
+            YYN=YYN5;
+            OM=OM5;
+        end
+    elseif(NIJPLAST>0)
+        % Use new viscoplastic viscosity
+        ETAVP=ETA5;
+        YYN=YYN5;
+        OM=OM5;
+    end
+    
+    % Save Last DT and DP
+    DP0=DP;
+    
+    % Reset/Update iteration counter without dt changes
+    if(yndt>0)
+        icount=0;
+    else
+        icount=icount+1;
+    end    
+    
+    if(fix(iloop/visstep)*visstep==iloop || ynstop>0)
+        figure(5);
+        plot(1:iloop,log10(YIELDERRNODAL(1:iloop)),'k');
+        title(['log Yielding error=',num2str(YIELDERRNODAL(iloop)),' Pa for ',num2str(NIJPLAST),' nodes time=',num2str(timesum),' s dt=',num2str(dt),' s'])
+        pause(0.1);
+    
+    end
+
+    % ynstop == 1意味着循环截止条件达到，此时只需跳出iterations
+    % 否则不跳出
+    if(ynstop>0)
+        break;
+    end
+    % End Plastic iterations on Nodes
+end
+
+    % Set old nodal stresses, pressure, state, velocity for advection and rotation
+    SXX0=SXX;   
+    P0=P;
+    SXY0=SXY;
+    OM0=OM;
+    vx0=vx;
+    vy0=vy;
+
+    % Sum of time.
+    timesum=timesum+dtm;
+    % Trace velocity
+    
+    velosmax(t)=max(max((pvx.^2+pvy.^2).^0.5));
+    timetrac(t)=timesum;
+    figure(4);colormap('Jet');clf
+    subplot(2,1,1)
+    plot(log10(velosmax))
+    subplot(2,1,2)
+    plot(timetrac,log10(velosmax))
+    pause(0.01)
+    % Figure at every 20 timesteps.
+    if(t==1 || fix(t/20)*20==t)
+        % ETA,Ha and T.
+        figure(1);
+        % Figure
+        subplot(1,3,1);
+        colormap('Jet');
+        pcolor(xp/1000,yp/1000,P);
+%         hold on;
+        %P nodes:(Nx1 * Ny1).
+%         quiver(xp(1:2:Nx1),yp(1:2:Ny1),pvx(1:2:Ny1,1:2:Nx1),pvy(1:2:Ny1,1:2:Nx1),'w')
+        xlabel('Horizontal(m)')
+        ylabel('Vertical(m)')
+        caxis([17 21]);
+        set(gca,'xaxislocation','top');
+        set (gca,'YDir','reverse')
+        shading interp;
+        axis ij image;
+        colorbar
+        title(['log10(ETA) after ',num2str(t),' deltat'])
+        % Ha
+        subplot(1,3,2);
+        colormap('Jet');
+        pcolor(xp,yp,HR);
+        xlabel('Horizontal(m)')
+        ylabel('Vertical(m)')
+        set(gca,'xaxislocation','top');
+        set (gca,'YDir','reverse')
+        shading interp;
+        colorbar;
+        axis ij image;
+        title(['Ha after ',num2str(t),' deltat'])
+        subplot(1,3,3);
+        pcolor(xp,yp,T1);colorbar;
+        xlabel('Horizontal(Km)');
+        ylabel('Vertical(Km)');
+        zlabel('Gravitational potential');
+        title(['(Ibc)(MIC) Temperature after',num2str(t),' deltat'])
+        set(gca,'xaxislocation','top');
+        set (gca,'YDir','reverse')
+        axis ij image;
+        shading interp;
+        % Change of yielderror with time.
+        figure(2);
+        plot(YIELDERRNODAL,'k','LineWidth',3);
+        title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        % Viscosity distribution plotted on P-node.
+        figure(3);
+        colormap('Jet');
+        pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
+        shading flat;
+        axis ij image;
+        colorbar
+        title(['log10ETA, Pa*s timestep=',num2str(t),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        
+        % Save figure
+        namefig=['VepmyNODE_' num2str(t)];
+        print ('-djpeg', '-r150',namefig);
+        
+        pause(0.1);
+    end
+end
+% Figure the change of yielderror. 
+figure(4);
+plot(YIELDERRNODAL(1:500),'k','LineWidth',3);
+title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
