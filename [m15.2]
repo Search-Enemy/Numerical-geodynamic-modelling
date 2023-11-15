@@ -34,14 +34,6 @@ yp =   -dy/2 : dy : Ly+dy/2;
 
 % Stokes-equ and continuity-equ
 % Temperature-equ
-% Amount of markers.
-Nxm = 4*(Nx-1);
-Nym = 4*(Ny-1);
-marknum=Nxm*Nym;
-% Step-length among L-marker points
-dxm = Lx/Nxm;
-dym = Ly/Nym;
-% Marker points.
 
 % Parameters (Block     Fault       Buffers)
 rhom   = [2700   2700   2700     ]; % Density, kg/m^3
@@ -56,7 +48,7 @@ brsfm =   [0.017  0.017  0.001 ]; % b
 lrsfm =   [0.010  0.010  0.010 ]; % L
 omm  =    [20     -1     -1    ]; % Cohesion, Pa  (State)
 V0=4e-9; % Reference slip velocity 
-DMIN=dx; % Min D-parameter
+DMIN=dy; % Min D-parameter
 DMAX=20000; % Max D-parameter (D:thickness of fault)
 KTHETA=1; % Eq15.31
 
@@ -70,6 +62,9 @@ ETA = etam(1)*ones(Ny,Nx);
 GGG =gggm(1)*ones(Ny,Nx);
 COSHE = cohesm(1)*ones(Ny,Nx);
 FRICT0 = frict0m(1)*ones(Ny,Nx);
+
+
+VPRSF=zeros(Ny,Nx); % Slip velocity of RSF
 
 OM0 = omm(1)*ones(Ny,Nx);
 OM = omm(1)*ones(Ny,Nx);
@@ -469,6 +464,8 @@ for iloop=1:1:nloop
     
     ETA5=ETA; % 传递老mius 而不是miusvp ，在每一次timestep
     YYN5=zeros(Ny,Nx);% 设置一个中间变量来传递“屈服标记矩阵”
+    DSY=zeros(Ny,Nx);
+
     OM5=OM;
     % "Update ETAVP(i,j)"
     DIJYIELD = 0;
@@ -495,6 +492,7 @@ for iloop=1:1:nloop
                           exp((BRSF(i,j)*OM5(i,j)+FRICT0(i,j))/ARSF(i,j)));
             THETA=exp(OM5(i,j))*LRSF(i,j)/V0;
             D=min(DMAX,max(DMIN,KTHETA*THETA*V0));
+            DEFF(i,j)=D;
             srIIplastic =  Vp/(2*D);
             etapl=ETA(i,j)*syieldij/(2*ETA(i,j)*srIIplastic+syieldij);
             
@@ -528,6 +526,7 @@ for iloop=1:1:nloop
                 ynij = 1;     %如果老欧拉点屈服，表明满足应力与粘度条件，则ynij=1
                 NIJPLAST = NIJPLAST + 1;
                 DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+                DSY(i,j) = SIIB-syieldij;
             end
             % Recompute nodal visocity
             ETA5(i,j)=etapl;
@@ -543,6 +542,7 @@ for iloop=1:1:nloop
             if(ynij==0)
                 NIJPLAST = NIJPLAST + 1;
                 DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
+                DSY(i,j) = SIIB-syieldij;
             end
         end
     end
@@ -551,56 +551,7 @@ for iloop=1:1:nloop
     if(NIJPLAST>0)
         YIELDERRNODAL(iloop)=(DIJYIELD/NIJPLAST)^0.5;
     end
-%                
-%             % Check whather each marker has been checked.0 is no,1 is yes.
-%             ynij = 0;%首先假定每一个欧拉点都不屈服
-%             % By default, each marker is subject to stress conditions???
-%             if(YYN(i,j) > 0)
-%                 ynij = 1;%如果老欧拉点屈服，表明满足应力与粘度条件ynij=1
-%                 NIJPLAST = NIJPLAST + 1;
-%                 DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
-%             end
-%             % ETAVP(i,j) = ETA(i,j);
-%             if(syieldij<siielaij)
-%                 % 满足应力屈服条件则更新粘度miuvp
-%                 ETAVPij = GGG(i,j)*dt*syieldij/(siielaij-syieldij);
-%                 if(ETAVPij < ETA(i,j))                
-%                     % 满足应力与粘度条件则应用于下一次循环，并且标记屈服1于此欧拉点
-%                     % 否则该欧拉点保持原来粘度。
-%                     ETA5(i,j) = ETAVPij; 
-%                     YYN5(i,j) = 1;
-%                     % 要注意在m13_2中的更新粘度有上下界
-%                     %  minetavpm = min(etaweak,c*dt*gggweak);
-%                     if(ETA5(i,j)<minetavpm)
-%                         ETA5(i,j)=minetavpm;
-%                     elseif(ETA5(i,j)>maxetavpm)
-%                         ETA5(i,j)=maxetavpm;
-%                     end
-%                     if(ynij ==0 )
-%                         % 如果该欧拉点是之前不屈服，经过修正后屈服的
-%                         % 如果欧拉点之前屈服，经过修正后仍然屈服的不进行累计                         
-%                         NIJPLAST = NIJPLAST + 1;
-%                         DIJYIELD = DIJYIELD + (SIIB-syieldij)^2;
-%                         % 或者说：
-%                         % ynij = 1的即已经计算误差并累计的此处不再计算
-%                         % 并且以前不屈服的，现在屈服了进行累计。
-%                         % 排除掉以前屈服的现在也屈服的，也就是说不对其进行累计。
-%                     end
-%                 else
-%                     % 如果满足应力条件但不满足粘度条件则不更新粘度
-%                     % 使用老粘度mius以及屈服标记0
-%                     ETA5(i,j) =ETA(i,j);
-%                     YYN5(i,j) = 0;
-%                 end
-%                 % Setoff tolerance level.
-%             else
-%                 % 如不满足应力条件则也不更新粘度；
-%                 % 使用老粘度mius以及屈服标记0
-%                 ETA5(i,j) = ETA(i,j);
-%                 YYN5(i,j) = 0;
-%             end
-%         end
-%     end
+
 % Apply criteria for decreasing the timestep
     yndt=0;
     % Define displacement timestep dtm
@@ -686,6 +637,7 @@ for iloop=1:1:nloop
         OM=OM5;
     end
     
+    
     % Save Last DT and DP
     DP0=DP;
     
@@ -697,10 +649,71 @@ for iloop=1:1:nloop
     end    
     
     if(fix(iloop/visstep)*visstep==iloop || ynstop>0)
-        figure(5);
+        figure(3);colormap('Jet');clf
+        subplot(3,4,1)
+        pcolor(x/1000,y/1000,log10(DEFF));% caxis([17 21])
+        shading flat;
+        axis ij image;
+        colorbar
+        title(['log D, m timestep=',num2str(t)])
+        % title(['log10ETA0, Pa*s timestep=',num2str(timestep)])
+        
+        subplot(3,4,2)
+        pcolor(x/1000,y/1000,log10(ETAVP00));% caxis([17 21])
+        shading flat;
+        axis ij image;
+        colorbar
+        title(['log10ETA00, Pa*s time=',num2str(timesum/(365.25*24*3600)),' yr'])
+        
+        subplot(3,4,3)
+        pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
+        shading flat;
+        axis ij image;
+        colorbar
+        title(['log10ETA, Pa*s iteration=',num2str(iloop)])
+        
+        subplot(3,4,4)
+        pcolor(x/1000,y/1000,DSY);% caxis([17 21])
+        shading flat;
+        axis ij image;
+        colorbar
+        title(['Yield error, Pa for nodes=',num2str(NIJPLAST)])
+        
+        subplot(3,4,5)
+        pcolor(xvx/1000,yvx/1000,vx)
+        shading interp;
+        axis ij image;
+        colorbar
+        title(['Vx, m/s time=',num2str(timesum),' s'])
+
+        
+        subplot(3,4,6)
+        pcolor(xvy/1000,yvy/1000,vy)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('Vy, m/s')
+        
+        subplot(3,4,7)
+        pcolor(x/1000,y/1000,OM)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('State')
+        
+        subplot(3,4,8)
+        pcolor(xp/1000,yp/1000,log10(EII))
+        shading interp;
+        axis ij image;
+        colorbar
+        title('logEPSILONii, 1/s')
+       
+        % Compute/Plot yielding error
+        subplot(3,1,3)
         plot(1:iloop,log10(YIELDERRNODAL(1:iloop)),'k');
-        title(['log Yielding error=',num2str(YIELDERRNODAL(iloop)),' Pa for ',num2str(NIJPLAST),' nodes time=',num2str(timesum),' s dt=',num2str(dt),' s'])
-        pause(0.1);
+        title(['log Yielding error=',num2str(YIELDERRNODAL(iloop)),' Pa for ',num2str(NIJPLAST),' nodes time=',num2str(timesum/(365.25*24*3600)),' yr dt=',num2str(dt),' s'])
+
+
     
     end
 
@@ -723,78 +736,123 @@ end
     % Sum of time.
     timesum=timesum+dtm;
     % Trace velocity
-    
-    velosmax(t)=max(max((pvx.^2+pvy.^2).^0.5));
+    % Trace slip
+    if(t==1)
+        SLIP(t,1:Nx)=VPRSF(Ny1/2,1:Nx)*dtm;
+    else
+        SLIP(t,1:Nx)=SLIP(t-1,1:Nx)+VPRSF(Ny1/2,1:Nx)*dtm;
+    end
+
+    velosmax(t)=max(max(VPRSF));
     timetrac(t)=timesum;
-    figure(4);colormap('Jet');clf
-    subplot(2,1,1)
-    plot(log10(velosmax))
-    subplot(2,1,2)
-    plot(timetrac,log10(velosmax))
-    pause(0.01)
+
     % Figure at every 20 timesteps.
-    if(t==1 || fix(t/20)*20==t)
-        % ETA,Ha and T.
-        figure(1);
-        % Figure
-        subplot(1,3,1);
-        colormap('Jet');
-        pcolor(xp/1000,yp/1000,P);
-%         hold on;
-        %P nodes:(Nx1 * Ny1).
-%         quiver(xp(1:2:Nx1),yp(1:2:Ny1),pvx(1:2:Ny1,1:2:Nx1),pvy(1:2:Ny1,1:2:Nx1),'w')
-        xlabel('Horizontal(m)')
-        ylabel('Vertical(m)')
-        caxis([17 21]);
-        set(gca,'xaxislocation','top');
-        set (gca,'YDir','reverse')
-        shading interp;
-        axis ij image;
-        colorbar
-        title(['log10(ETA) after ',num2str(t),' deltat'])
-        % Ha
-        subplot(1,3,2);
-        colormap('Jet');
-        pcolor(xp,yp,HR);
-        xlabel('Horizontal(m)')
-        ylabel('Vertical(m)')
-        set(gca,'xaxislocation','top');
-        set (gca,'YDir','reverse')
-        shading interp;
-        colorbar;
-        axis ij image;
-        title(['Ha after ',num2str(t),' deltat'])
-        subplot(1,3,3);
-        pcolor(xp,yp,T1);colorbar;
-        xlabel('Horizontal(Km)');
-        ylabel('Vertical(Km)');
-        zlabel('Gravitational potential');
-        title(['(Ibc)(MIC) Temperature after',num2str(t),' deltat'])
-        set(gca,'xaxislocation','top');
-        set (gca,'YDir','reverse')
-        axis ij image;
-        shading interp;
-        % Change of yielderror with time.
-        figure(2);
-        plot(YIELDERRNODAL,'k','LineWidth',3);
-        title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
-        % Viscosity distribution plotted on P-node.
-        figure(3);
-        colormap('Jet');
+    if(t==1 || fix(t/visstep)*visstep==t)
+        figure(1);colormap('Jet');clf
+        subplot(3,4,1)
         pcolor(x/1000,y/1000,log10(ETAVP));% caxis([17 21])
         shading flat;
         axis ij image;
         colorbar
-        title(['log10ETA, Pa*s timestep=',num2str(t),' time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        title(['log10ETA, Pa*s timestep=',num2str(t)])
         
-        % Save figure
-        namefig=['VepmyNODE_' num2str(t)];
-        print ('-djpeg', '-r150',namefig);
+        subplot(3,4,2)
+        pcolor(xp/1000,yp/1000,P)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('Pressure, Pa')
         
+        subplot(3,4,3)
+        pcolor(xp/1000,yp/1000,pvx)
+        shading interp;
+        axis ij image;
+        colorbar
+        title(['Vx, m/s time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+        hold on
+        quiver(xp(3:5:Nx1)/1000,yp(3:5:Ny1)/1000,pvx(3:5:Ny,3:5:Nx1),pvy(3:5:Ny1,3:5:Nx1),'k')
+        
+        subplot(3,4,4)
+        pcolor(xp/1000,yp/1000,pvy)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('Vy, m/s')
+        hold on
+        quiver(xp(3:5:Nx1)/1000,yp(3:5:Ny1)/1000,pvx(3:5:Ny,3:5:Nx1),pvy(3:5:Ny1,3:5:Nx1),'k')
+        
+        subplot(3,4,5)
+        pcolor(x/1000,y/1000,OM)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('State')
+        
+        subplot(3,4,6)
+        pcolor(xp/1000,yp/1000,EXX)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('EPSILONxx, 1/s')
+        
+        subplot(3,4,7)
+        pcolor(x/1000,y/1000,EXY)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('EPSILONxy, 1/s')
+        
+        subplot(3,4,8)
+        pcolor(xp/1000,yp/1000,log10(EII))
+        shading interp;
+        axis ij image;
+        colorbar
+        title('logEPSILONii, 1/s')
+        
+        subplot(3,4,9)
+        pcolor(x/1000,y/1000,log10(VPRSF))
+        shading interp;
+        axis ij image;
+        colorbar
+        title('Vp, m/s')
+        
+        subplot(3,4,10)
+        pcolor(xp/1000,yp/1000,SXX)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('SIGMAxx, Pa')
+        
+        subplot(3,4,11)
+        pcolor(x/1000,y/1000,SXY)
+        shading interp;
+        axis ij image;
+        colorbar
+        title('SIGMAxy, Pa')
+        
+        subplot(3,4,12)
+        pcolor(xp(2:Nx)/1000,yp(2:Ny)/1000,SII(2:Ny,2:Nx))
+        shading interp;
+        axis ij image;
+        colorbar
+        title('SIGMAii, Pa')
+        
+        figure(4);colormap('Jet');clf
+        subplot(2,1,1)
+        plot(log10(velosmax))
+        subplot(2,1,2)
+        plot(timetrac/(365.25*24*3600),log10(velosmax))
+        
+        
+        figure(2);colormap('Jet');clf
+        hold on
+        plot(x/1000,SLIP(1,:))
+        for itr=100:100:t
+            plot(x/1000,SLIP(itr,:))
+        end
         pause(0.1);
     end
+    
+    
 end
-% Figure the change of yielderror. 
-figure(4);
-plot(YIELDERRNODAL(1:500),'k','LineWidth',3);
-title(['YIELDERR time=',num2str(timesum/(365.25*24*3600)),' Yr'])
+
