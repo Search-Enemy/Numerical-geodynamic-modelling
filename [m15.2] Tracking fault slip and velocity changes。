@@ -483,10 +483,10 @@ for iloop=1:1:nloop
             % 记录Vp
             VPRSF(i,j) = Vp;
             % log 是自然指数对数
-            if( Vp*dt/LRSF(i,j)<=1e-6 )
-                OM5(i,j) = log( exp(OM0(i,j)) * ( 1-Vp*dt/LRSF(i,j) ) + V0*dt/LRSF(i,j) );
-            elseif(Vp*dt/LRSF(i,j)>1e-6 )
+            if( Vp*dt/LRSF(i,j)>1e-6 )
                 OM5(i,j) = log( V0/Vp + ( exp(OM0(i,j))- V0/Vp )*exp(-Vp*dt/LRSF(i,j)) );
+            else
+                OM5(i,j) = log( exp(OM0(i,j)) * ( 1-Vp*dt/LRSF(i,j) ) + V0*dt/LRSF(i,j) );
             end
             syieldij=COSHE(i,j)+PB*ARSF(i,j)*asinh(Vp/2/V0*...
                           exp((BRSF(i,j)*OM5(i,j)+FRICT0(i,j))/ARSF(i,j)));
@@ -613,7 +613,7 @@ for iloop=1:1:nloop
     if(yndt>0)
         dt=max(dtmin,min([dtm, dts, dtpl, dtom, dtrobert, dtlapusta, dtp]));
         % Reset old viscoplastic viscosity, temperature
-        ETA=ETAVP00;
+        ETAVP=ETAVP00;
         YYN=YYN00;
         OM=OM0;
     elseif(icount>0)
