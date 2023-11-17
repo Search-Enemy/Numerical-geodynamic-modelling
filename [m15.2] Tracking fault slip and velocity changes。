@@ -1,4 +1,6 @@
-% "Adding inertia and comressiable to" global visco-elasto-plastic iterations on "Eulerian-NODE".
+% "No any code of marker".
+% "Adjust rate- and state- dependent friction(RSF) to previous program".
+% " Tracking distance of fault slip and observing mutation of Vp(slip rate)"
 
 
 clear all;clf;
