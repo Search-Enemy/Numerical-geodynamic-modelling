@@ -110,12 +110,11 @@ p0m=zeros(1,marknum); % Marker pressure, Pa
 vx0m=zeros(1,marknum); % Marker vx, m/s
 vy0m=zeros(1,marknum); % Marker vy, m/s
 om0m=zeros(1,marknum); % Marker vy, m/s
-
 rhom    = [2700   2700   2700  ]; % Density, kg/m^3
 etam    = [1e+23  1e+23  1e+23 ]; % Viscosity, Pa s
 rhocpm  = [2.7e+6 2.7e+6 2.7e+6]; % Volumetric heat capacity, kg/m^3
 alpham  = [0e-5   0e-5   0e-5  ]; % Thermal expansion, 1/K
-bettam  = [2e-11  2e-11  2e-11 ]; % Compressibility, 1/Pa
+beitam  = [2e-11  2e-11  2e-11 ]; % Compressibility, 1/Pa
 km      = [3      3      3     ]; % Thermal conductivity, W/m/K
 hrm     = [3e-8   3e-8   3e-8  ]; % Radiogenic heat production, W/m^3
 gggm    = [3e+10  3e+10  3e+10 ]; % Shear Modulus, Pa
@@ -141,7 +140,7 @@ for jm=1:1:Nxm
         % Block
         tm(m)=1; % Material type
         % Fault
-        if(ym(m)>ysize/2-dy && ym(m)<ysize/2+dy)
+        if(ym(m)>Ly/2-dy && ym(m)<Ly/2+dy)
             % 根据后面OM0的定义，初始断层仍然限制在中间有限宽度(Ny1/2 - 1 , Ny1/2 + 1).
             tm(m)=2; % Material type
             om0m(m)=-1; % State parameter
@@ -213,6 +212,7 @@ perrmax=3e+4; % Tolerance level for pressure error, Pa，下面三行是对应�
 YIELDERRNODAL=zeros(1,nloop);
 TEMERRNODAL = zeros(1,nloop);
 PREERRNODAL = zeros(1,nloop);
+vpratio = 1/3;
 % 400-->500
 Nt = 5000;
 dt00=dt;
@@ -293,50 +293,50 @@ sxym00=sxym;
         % i,j Node
         ETAVPSUM(i,j)=ETAVPSUM(i,j)+etavpm(m)*wtmij;
         ETASUM(i,j)=ETASUM(i,j)+etam(tm(m))*wtmij;
-        FRICT0UM(i,j)=FRICT0UM(i,j)+frictsm(tm(m))*wtmij;
+        FRICT0UM(i,j)=FRICT0UM(i,j)+frict0m(tm(m))*wtmij;
         COSHESUM(i,j)=COSHESUM(i,j)+cohesm(tm(m))*wtmij;
         GGGSUM(i,j)=GGGSUM(i,j)+1/gggm(tm(m))*wtmij;
         SXYSUM(i,j)=SXYSUM(i,j)+sxym(m)*wtmij;
         ARSFSUM(i,j)=ARSFSUM(i,j) + arsfm(tm(m))*wtmij;
         BRSFSUM(i,j)=BRSFSUM(i,j) + brsfm(tm(m))*wtmij;
         LRSFSUM(i,j)=LRSFSUM(i,j)   + lrsfm(tm(m))*wtmij;
-        OM0SUM(i,j)=OM0SUM(i,j) + omom(m)*wtmij;
+        OM0SUM(i,j)=OM0SUM(i,j) + om0m(m)*wtmij;
         WTBSUM(i,j)=WTBSUM(i,j)+wtmij;
         % i+1,j Node
         ETAVPSUM(i+1,j)=ETAVPSUM(i+1,j)+etavpm(m)*wtmi1j;
         ETASUM(i+1,j)=ETASUM(i+1,j)+etam(tm(m))*wtmi1j;
-        FRICT0UM(i+1,j)=FRICT0UM(i+1,j)+frictsm(tm(m))*wtmi1j;
+        FRICT0UM(i+1,j)=FRICT0UM(i+1,j)+frict0m(tm(m))*wtmi1j;
         COSHESUM(i+1,j)=COSHESUM(i+1,j)+cohesm(tm(m))*wtmi1j;
         GGGSUM(i+1,j)=GGGSUM(i+1,j)+1/gggm(tm(m))*wtmi1j;
         SXYSUM(i+1,j)=SXYSUM(i+1,j)+sxym(m)*wtmi1j;
         ARSFSUM(i+1,j)=ARSFSUM(i+1,j) + arsfm(tm(m))*wtmi1j;
         BRSFSUM(i+1,j)=BRSFSUM(i+1,j) + brsfm(tm(m))*wtmi1j;
         LRSFSUM(i+1,j)=LRSFSUM(i+1,j)   + lrsfm(tm(m))*wtmi1j;
-        OM0SUM(i+1,j)=OM0SUM(i+1,j) + omom(m)*wtmi1j;
+        OM0SUM(i+1,j)=OM0SUM(i+1,j) + om0m(m)*wtmi1j;
         WTBSUM(i+1,j)=WTBSUM(i+1,j)+wtmi1j;
         % i,j+1 Node
         ETAVPSUM(i,j+1)=ETAVPSUM(i,j+1)+etavpm(m)*wtmij1;
         ETASUM(i,j+1)=ETASUM(i,j+1)+etam(tm(m))*wtmij1;
-        FRICT0UM(i,j+1)=FRICT0UM(i,j+1)+frictsm(tm(m))*wtmij1;
+        FRICT0UM(i,j+1)=FRICT0UM(i,j+1)+frict0m(tm(m))*wtmij1;
         COSHESUM(i,j+1)=COSHESUM(i,j+1)+cohesm(tm(m))*wtmij1;
         GGGSUM(i,j+1)=GGGSUM(i,j+1)+1/gggm(tm(m))*wtmij1;
         SXYSUM(i,j+1)=SXYSUM(i,j+1)+sxym(m)*wtmij1;
         ARSFSUM(i,j+1)=ARSFSUM(i,j+1) + arsfm(tm(m))*wtmij1;
         BRSFSUM(i,j+1)=BRSFSUM(i,j+1) + brsfm(tm(m))*wtmij1;
         LRSFSUM(i,j+1)=LRSFSUM(i,j+1)   + lrsfm(tm(m))*wtmij1;
-        OM0SUM(i,j+1)=OM0SUM(i,j+1) + omom(m)*wtmij1;
+        OM0SUM(i,j+1)=OM0SUM(i,j+1) + om0m(m)*wtmij1;
         WTBSUM(i,j+1)=WTBSUM(i,j+1)+wtmij1;
         % i+1,j+1 Node
         ETAVPSUM(i+1,j+1)=ETAVPSUM(i+1,j+1)+etavpm(m)*wtmi1j1;
         ETASUM(i+1,j+1)=ETASUM(i+1,j+1)+etam(tm(m))*wtmi1j1;
-        FRICT0UM(i+1,j+1)=FRICT0UM(i+1,j+1)+frictsm(tm(m))*wtmi1j1;
+        FRICT0UM(i+1,j+1)=FRICT0UM(i+1,j+1)+frict0m(tm(m))*wtmi1j1;
         COSHESUM(i+1,j+1)=COSHESUM(i+1,j+1)+cohesm(tm(m))*wtmi1j1;
         GGGSUM(i+1,j+1)=GGGSUM(i+1,j+1)+1/gggm(tm(m))*wtmi1j1;
         SXYSUM(i+1,j+1)=SXYSUM(i+1,j+1)+sxym(m)*wtmi1j1;
         ARSFSUM(i+1,j+1)=ARSFSUM(i+1,j+1) + arsfm(tm(m))*wtmi1j1;
         BRSFSUM(i+1,j+1)=BRSFSUM(i+1,j+1) + brsfm(tm(m))*wtmi1j1;
         LRSFSUM(i+1,j+1)=LRSFSUM(i+1,j+1)   + lrsfm(tm(m))*wtmi1j1;
-        OM0SUM(i+1,j+1)=OM0SUM(i+1,j+1) + omom(m)*wtmi1j1;
+        OM0SUM(i+1,j+1)=OM0SUM(i+1,j+1) + om0m(m)*wtmi1j1;
         WTBSUM(i+1,j+1)=WTBSUM(i+1,j+1)+wtmi1j1;
         % Interpolation to vx-nodes
         % Define i,j indexes for the upper left node
@@ -634,8 +634,202 @@ for iloop=1:1:nloop
             ETAPVP(i,j)=1/((1/ETAVP(i-1,j-1)+1/ETAVP(i,j-1)+1/ETAVP(i-1,j)+1/ETAVP(i,j))/4);
         end
     end
-    % The answer to this program introduces a new way of writing the Stokes equation, 
-    % But the actual content remains unchanged.
+    
+    % Composing global matrixes L(), R() for Navier-Stokes and continuity equations
+    for j=1:1:Nx1
+        for i=1:1:Ny1
+            % Define global indexes in algebraic space
+            kvx=((j-1)*Ny1+i-1)*3+1; % Vx
+            kvy=kvx+1; % Vy
+            kpm=kvx+2; % P
+            
+            % Vx equation External points
+            if(i==1 || i==Ny1 || j==1 || j==Nx || j==Nx1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(j==Nx1)
+                    coe(kvx,kvx)=1; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Left Boundary
+                if(j==1)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx+Ny1*3)=-1; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Right Boundary
+                if(j==Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx-Ny1*3)=-1; % Left part
+                    b(kvx)=0; % Right part
+                end
+                % Top boundary
+                if(i==1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx+3)=bctop; % Left part
+                    b(kvx)=2*vxtop; % Right part
+                end
+                % Top boundary
+                if(i==Ny1 && j>1 && j<Nx)
+                    coe(kvx,kvx)=1; % Left part
+                    coe(kvx,kvx-3)=bcbottom; % Left part
+                    b(kvx)=2*vxbottom; % Right part
+                end
+            else
+                % Internal points: x-Navier-Stokes eq.
+                %            Vx2
+                %             |
+                %        Vy1  |  Vy3
+                %             |
+                %     Vx1-P1-Vx3-P2-Vx5
+                %             |
+                %        Vy2  |  Vy4
+                %             |
+                %            Vx4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i-1,j)*GGG(i-1,j)*dt/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i,j+1)*GGGP(i,j+1)*dt/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Old stresses
+                SXY1=SXY0(i-1,j)*ETAVP(i-1,j)/(GGG(i-1,j)*dt+ETAVP(i-1,j));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SXX1=SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SXX2=SXX0(i,j+1)*ETAPVP(i,j+1)/(GGGP(i,j+1)*dt+ETAPVP(i,j+1));
+                % Density gradients
+                dRHOdx=(RHOVX(i,j+1)-RHOVX(i,j-1))/2/dx;
+                dRHOdy=(RHOVX(i+1,j)-RHOVX(i-1,j))/2/dy;
+                % Left part
+                coe(kvx,kvx-Ny1*3)=ETAP1/dx^2; % Vx1
+                coe(kvx,kvx-3)=ETA1/dy^2; % Vx2
+                coe(kvx,kvx)=-(ETAP1+ETAP2)/dx^2-...
+                    (ETA1+ETA2)/dy^2-...
+                    dRHOdx*gx*dt-RHOVX(i,j)/dt; % Vx3
+                coe(kvx,kvx+3)=ETA2/dy^2; % Vx4
+                coe(kvx,kvx+Ny1*3)=ETAP2/dx^2; % Vx5
+                coe(kvx,kvy)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy2
+                coe(kvx,kvy+Ny1*3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdy*gx*dt/4;  % Vy4
+                coe(kvx,kvy-3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy1
+                coe(kvx,kvy+Ny1*3-3)=ETAP2/dx/dy-ETA1/dx/dy-dRHOdy*gx*dt/4;  % Vy3
+                coe(kvx,kpm)=Kcont/dx; % P1
+                coe(kvx,kpm+Ny1*3)=-Kcont/dx; % P2
+                % Right part
+                b(kvx)=-RHOVX(i,j)*(gx+vx0(i,j)/dt)-(SXY2-SXY1)/dy-(SXX2-SXX1)/dx;
+            end
+            
+            % Vy equation External points
+            if(j==1 || j==Nx1 || i==1 || i==Ny || i==Ny1)
+                % Boundary Condition
+                % Ghost unknowns 1*Vx=0
+                if(i==Ny1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Top boundary
+                if(i==1)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Bottom boundary
+                if(i==Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Left boundary
+                if(j==1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy+3*Ny1)=bcleft; % Left part
+                    b(kvy)=0; % Right part
+                end
+                % Right boundary
+                if(j==Nx1 && i>1 && i<Ny)
+                    coe(kvy,kvy)=1; % Left part
+                    coe(kvy,kvy-3*Ny1)=bcright; % Left part
+                    b(kvy)=0; % Right part
+                end
+            else
+                % Internal points: y-Navier-Stokes eq.
+                %            Vy2
+                %             |
+                %         Vx1 P1 Vx3
+                %             |
+                %     Vy1----Vy3----Vy5
+                %             |
+                %         Vx2 P2 Vx4
+                %             |
+                %            Vy4
+                %
+                % Computational viscosity
+                ETA1=ETAVP(i,j-1)*GGG(i,j-1)*dt/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                ETA2=ETAVP(i,j)*GGG(i,j)*dt/(GGG(i,j)*dt+ETAVP(i,j));
+                ETAP1=ETAPVP(i,j)*GGGP(i,j)*dt/(GGGP(i,j)*dt+ETAPVP(i,j));
+                ETAP2=ETAPVP(i+1,j)*GGGP(i+1,j)*dt/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Old stresses
+                SXY1=SXY0(i,j-1)*ETAVP(i,j-1)/(GGG(i,j-1)*dt+ETAVP(i,j-1));
+                SXY2=SXY0(i,j)*ETAVP(i,j)/(GGG(i,j)*dt+ETAVP(i,j));
+                SYY1=-SXX0(i,j)*ETAPVP(i,j)/(GGGP(i,j)*dt+ETAPVP(i,j));
+                SYY2=-SXX0(i+1,j)*ETAPVP(i+1,j)/(GGGP(i+1,j)*dt+ETAPVP(i+1,j));
+                % Density gradients
+                dRHOdx=(RHOVY(i,j+1)-RHOVY(i,j-1))/2/dx;
+                dRHOdy=(RHOVY(i+1,j)-RHOVY(i-1,j))/2/dy;
+                % Left part
+                coe(kvy,kvy-Ny1*3)=ETA1/dx^2; % Vy1
+                coe(kvy,kvy-3)=ETAP1/dy^2; % Vy2
+                coe(kvy,kvy)=-(ETAP1+ETAP2)/dy^2-...
+                    (ETA1+ETA2)/dx^2-...
+                    dRHOdy*gy*dt-RHOVY(i,j)/dt; % Vy3
+                coe(kvy,kvy+3)=ETAP2/dy^2; % Vy4
+                coe(kvy,kvy+Ny1*3)=ETA2/dx^2; % Vy5
+                coe(kvy,kvx)=ETAP1/dx/dy-ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx3
+                coe(kvy,kvx+3)=-ETAP2/dx/dy+ETA2/dx/dy-dRHOdx*gy*dt/4; %Vx4
+                coe(kvy,kvx-Ny1*3)=-ETAP1/dx/dy+ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx1
+                coe(kvy,kvx+3-Ny1*3)=ETAP2/dx/dy-ETA1/dx/dy-dRHOdx*gy*dt/4; %Vx2
+                coe(kvy,kpm)=Kcont/dy; % P1
+                coe(kvy,kpm+3)=-Kcont/dy; % P2
+                
+                % Right part
+                b(kvy)=-RHOVY(i,j)*(gy+vy0(i,j)/dt)-(SXY2-SXY1)/dx-(SYY2-SYY1)/dy;
+            end
+            
+            % P equation External points
+            if(i==1 || j==1 || i==Ny1 || j==Nx1)
+                % Boundary Condition
+                % 1*P=0
+                coe(kpm,kpm)=1; % Left part
+                b(kpm)=0; % Right part
+            else
+                % Internal points: compressible continuity eq.
+                % dVx/dx+dVy/dy+BETTA*DP/Dt=ALPHA*DT/Dt
+                %            Vy1
+                %             |
+                %        Vx1--P--Vx2
+                %             |
+                %            Vy2
+                %
+                % Left part
+                coe(kpm,kvx-Ny1*3)=-1/dx; % Vx1
+                coe(kpm,kvx)=1/dx; % Vx2
+                coe(kpm,kvy-3)=-1/dy; % Vy1
+                coe(kpm,kvy)=1/dy; % Vy2
+                % Incompressible pressure buildup at the first timestep
+                %         if(timestep>1)
+                coe(kpm,kpm)=Kcont*BEITAP(i,j)/dt; % P
+                %         end
+                % Right part
+                % Incompressible pressure buildup at the first timestep
+                %         if(timestep>1)
+                b(kpm)=BEITAP(i,j)*P0(i,j)/dt+ALPHAP(i,j)*(T1(i,j)-T0(i,j))/dt;
+                %         else
+                %             R(kpm)=0;
+                %         end
+                
+            end
+            
+        end
+    end
+    
+    
     % Composing global matrixes L(), R()
     for j=1:-1:Nx1
         for i=1:1:Ny1
@@ -1053,15 +1247,14 @@ for iloop=1:1:nloop
             end
             syieldij=COSHE(i,j)+PB*ARSF(i,j)*asinh(Vp/2/V0*...
                           exp((BRSF(i,j)*OM5(i,j)+FRICT0(i,j))/ARSF(i,j)));
-            THETA=exp(OM5(i,j))*LRSF(i,j)/V0;
-            D=min(DMAX,max(DMIN,KTHETA*THETA*V0));
+
             DEFF(i,j)=D;
             srIIplastic =  Vp/(2*D);
             etapl=ETA(i,j)*syieldij/(2*ETA(i,j)*srIIplastic+syieldij);
             
             % Timestep criterion, Lapusta et al., 2000; Lapusta and Liu, 2009
             % Bulk modulus
-            B=1/((BETTA(i,j)+BETTA(i+1,j)+BETTA(i,j+1)+BETTA(i+1,j+1))/4);
+            B=1/((BEITAP(i,j)+BEITAP(i+1,j)+BEITAP(i,j+1)+BEITAP(i+1,j+1))/4);
             % Kinematic viscosity coefficient
             vi=(3*B-2*GGG(i,j))/(6*B+2*GGG(i,j));
             % Middle coefficient
@@ -1959,23 +2152,22 @@ end
     end
     % Vx
     % Top
-    pvx(1,2:Nx-1)       = pvx(2,2:Nx-1);
+    pvx(1,2:Nx-1)=2*vxtop-bctop*pvx(2,2:Nx-1);
     % Bottom
-    pvx(Ny1,2:Nx-1) = pvx(Ny,2:Nx-1);
+    pvx(Ny1,2:Nx-1)=2*vxbottom-bcbottom*pvx(Ny,2:Nx-1);
     % Left
-    pvx(:,1)                    = 2*vxleft -pvx(:,2);
+    pvx(:,1)=pvx(:,2);
     % Right
-    pvx(:,Nx1)              = 2*vxright-pvx(:,Nx);
-    % Vy
+    pvx(:,Nx1)=pvx(:,Nx);
+     % Vy
     % Left
-    pvy(2:Ny-1,1)      =  pvy(2:Ny-1,2);
+    pvy(2:Ny-1,1)=-bcleft*pvy(2:Ny-1,2);
     % Right
-    pvy(2:Ny-1,Nx1)=  pvy(2:Ny-1,Nx); % Free slip
+    pvy(2:Ny-1,Nx1)=-bcright*pvy(2:Ny-1,Nx);
     % Top
-    pvy(1,:)                   =  2*vytop   - pvy(2,:);
+    pvy(1,:)=-pvy(2,:);
     % Bottom
-    pvy(Ny1,:)             =  2*vybottom- pvy(Ny,:);
-
+    pvy(Ny1,:)=-pvy(Ny,:);
     % Rotate stress by Analytical formulas.
     for i=1:1:Ny
         for j=1:1:Nx
@@ -2780,9 +2972,10 @@ end
         figure(2);colormap('Jet');clf
         hold on
         plot(x/1000,SLIP(1,:))
-        for itr=100:100:t
+        for itr=visstep:visstep:t
             plot(x/1000,SLIP(itr,:))
         end
+        title("Tracking Slip Distance with time.");
         pause(0.1);
     end
     
