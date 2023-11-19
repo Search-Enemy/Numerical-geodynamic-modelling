@@ -1,6 +1,6 @@
 % " Included marker interpolation and transporation".
 % " Backtracing dev-stress(SXX,SXY),velocity(Vx,Vy),pressure(P) and state(OM)
-%    with Fourth-order Runge-Kutta scheme".
+%    with Fourth-order Runge-Kutta scheme".ABOUT LINES 2300-2870.
 % " Adjust rate- and state- dependent friction(RSF) to previous program".
 % " Tracking distance of fault slip and observing mutation of Vp(slip rate)"
 
