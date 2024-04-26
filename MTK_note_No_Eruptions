@@ -1,0 +1,1897 @@
+
+using ParallelStencil
+@init_parallel_stencil(Threads, Float64, 2) # 初始化并行环境
+using Parameters
+using StructArrays
+using Plots
+using GeoParams
+using StaticArrays  # 计算旋转矩阵时的SMatrix函数
+using LinearAlgebra: norm # 计算err时用的范数
+using ParallelStencil.FiniteDifferences2D # for function assign!
+using MagmaThermoKinematics
+using Interpolations
+using Random
+using WriteVTK
+using Makie
+using Statistics
+
+const USE_GPU=false;
+if USE_GPU  
+    environment!(:gpu, Float64, 2)      # initialize in 2D on GPU
+else        
+    environment!(:cpu, Float64, 2)      # initialize in 3D on CPU
+end
+
+struct GridData{FT, D}
+    ConstantΔ   :: Bool                         # Constant spacing (true in all cases for now)
+    N           :: NTuple{D,Int}                # Number of grid points in every direction
+    Δ           :: NTuple{D,FT}                 # (constant) spacing in every direction
+    L           :: NTuple{D,FT}                 # Domain size
+    min         :: NTuple{D,FT}                 # start of the grid in every direction 
+    max         :: NTuple{D,FT}                 # end of the grid in every direction 
+    coord1D     :: NTuple{D,StepRangeLen{FT}}   # Tuple with 1D vectors in all directions
+    coord1D_cen :: NTuple{D,StepRangeLen{FT}}   # Tuple with 1D vectors of center points in all directions
+end  
+function CreateGrid(;
+    size=(),
+     x = nothing, z = nothing, y = nothing,
+     extent = nothing
+)
+    
+    if isa(size, Number)
+        size = (size,)  # transfer to tuple
+    end
+    if isa(extent, Number)
+        extent = (extent,) 
+    end
+    N = size
+    dim =   length(N)   
+    
+    # Specify domain by length in every direction
+    if !isnothing(extent)
+        x,y,z = nothing, nothing, nothing
+        x = (0., extent[1])
+        if dim==2
+            z =  (-extent[2], 0.0)       # vertical direction (negative)
+        end
+        if dim==3
+            y = (0., extent[2])
+            z =  (-extent[3], 0.0)       # vertical direction (negative)
+        end
+    end
+
+    FT = typeof(x[1])
+    if      dim==1
+        L = (x[2] - x[1],)
+        X₁= (x[1], )
+    elseif  dim==2
+        L = (x[2] - x[1], z[2] - z[1])
+        X₁= (x[1], z[1])
+    else
+        L = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
+        X₁= (x[1], y[1], z[1])
+    end
+    Xₙ  = X₁ .+ L  
+    Δ   = L ./ (N .- 1)       
+
+    # Generate 1D coordinate arrays of vertexes in all directions
+    coord1D=()
+    for idim=1:dim
+        coord1D  = (coord1D...,   range(X₁[idim], Xₙ[idim]; length = N[idim]  ))
+    end
+    
+    # Generate 1D coordinate arrays centers in all directions
+    coord1D_cen=()
+    for idim=1:dim
+        coord1D_cen  = (coord1D_cen...,   range(X₁[idim]+Δ[idim]/2, Xₙ[idim]-Δ[idim]/2; length = N[idim]-1  ))
+    end
+    
+    ConstantΔ   = true;
+    return GridData(ConstantΔ,N,Δ,L,X₁,Xₙ,coord1D, coord1D_cen)
+
+end
+@with_kw struct Numeric_params
+    ω::Float64                  =   0.75;            # relaxation parameter for nonlinear iterations    
+    max_iter::Int64             =   2000;           # max. number of nonlinear iterations        
+    verbose::Bool               =   false;          # print info?
+    convergence::Float64        =   1e-4;           # nonlinear convergence criteria   
+    axisymmetric::Bool          =   false;          # Axisymmetric or 2D?
+    flux_bottom_BC::Bool        =   false;          # Flux bottom BC?
+    flux_bottom::Float64        =   0.0;            # flux @ bottom, in case flux_bottom_BC=true
+    deactivate_La_at_depth::Bool=   false;
+end
+# initialize time and distance of model
+const second = 1.0 
+
+const SecYear = 365.25*24*3600*second
+
+const yr = 365.25*24*3600*second
+
+const kyr = 1000yr
+
+const myr = 1000kyr
+
+const meter = 1.0
+
+const km = 1000meter
+
+const km³ = 1e9*meter
+
+
+
+function CreateArrays(SizeNames::Dict )
+
+    Arrays = NamedTuple()
+    array_sizes = collect(keys(SizeNames))
+    for sz in array_sizes
+        arrays = get(SizeNames,sz,0)
+        array_names = keys(arrays)
+        for i = 1:length(arrays)
+            data    = @ones(sz...)*arrays[i]     # initialize ParallelStencil array with correct size
+            Arrays  = add_field(Arrays,array_names[i], data)
+        end
+    end
+
+    return Arrays
+end
+
+function add_field(fields::NamedTuple, name::Symbol, newfield)
+    
+    fields = merge(fields, NamedTuple{(name,)}( (newfield,)) );
+
+    return fields
+end
+
+
+@parallel_indices (i,j) function GridArray!(X::AbstractArray, Z::AbstractArray, x::AbstractVector,z::AbstractVector)
+        X[i,j] = x[i]
+        Z[i,j] = z[j]
+    return 
+end
+
+# diffusion.jl
+@with_kw mutable struct Tracer
+    num         ::  Int64     =  0           # number
+    coord       ::  Vector{Float64}          # holds coordinates [2D or 3D]
+    T           ::  Float64   =  900         # temperature
+    Phase       ::  Int64     =  1           # Phase (aka rock type) of the Tracer      
+    Phi         ::  Float64   =  0           # Melt fraction on Tracers
+    time_vec    ::  Vector{Float64} = []     # Time vector
+    T_vec       ::  Vector{Float64} = []     # Temperature vector
+    flag        ::  Int64     =  0 
+    age         ::  Float64   =  0 
+end
+# 实际上二者可以合并在一起.
+# Phase == 2(magma)
+@with_kw struct Dike    # stores info about dike
+    # Note: since we utilize the "Parameters.jl" package, we can add more keywords here w/out breaking the rest of the code 
+    #
+    # We can also define only a few parameters here (like Q and ΔP) and compute Width/Thickness from that
+    # Or we can define thickness 
+    Angle       ::  Vector{Float64} =   [0.]                                  # Strike/Dip angle of dike
+    Type        ::  String          =   "SquareDike"                          # Type of dike
+    T           ::  Float64         =   950.0                                 # Temperature of dike
+    E           ::  Float64         =   1.5e10                                # Youngs modulus (only required for elastic dikes)
+    ν           ::  Float64         =   0.3                                   # Poison ratio of host rocks
+    ΔP          ::  Float64         =   1e6;                                  # Overpressure of elastic dike
+    Q           ::  Float64         =   1000;                                 # Volume of elastic dike
+    W           ::  Float64         =   (3*E*Q/(16*(1-ν^2)*ΔP))^(1.0/3.0);    # Width of dike/sill   
+    H           ::  Float64         =   8*(1-ν^2)*ΔP*W/(π*E);                 # (maximum) Thickness of dike/sill
+    Center      ::  Vector{Float64} =   [20e3 ; -10e3]                        # Center
+    Phase       ::  Int64           =   2;                                    # Phase of newly injected magma
+end
+
+
+# here and using ParallelStencil.2D
+@parallel function assign!(A::AbstractArray, B::AbstractArray, add::Number)
+    @all(A) = @all(B) + add
+    return
+end
+
+@parallel function assign!(A::AbstractArray, B::AbstractArray)
+    @all(A) = @all(B)
+    return
+end
+
+function HostRockVelocityFromDike( Grid, Points, Δ, dt, dike::Dike)
+
+    # Prescibe the velocity field to inject the dike with given orientation
+    # 这个文件中的Grid都是Gridho
+    # dt都是    1
+    dim = length(Grid);
+    if dim==2
+        #X,Z          =  Points[1], Points[2];
+         
+        # Rotate and shift coordinate system into 'dike' reference frame
+        # 此函数中的歌Type都是Typeho
+        @unpack Angle,Type = dike
+        α           =   Angle[1];
+
+        RotMat      =   SMatrix{2,2}([cosd(α) -sind(α); sind(α) cosd(α)]);    # 2D rotation matrix
+       # Xrot,Zrot   =   zeros(size(Points[1])), zeros(size(Points[2]));
+
+        Points[1]           .= Points[1] .- dike.Center[1];
+        Points[2]           .= Points[2] .- dike.Center[2];
+        RotatePoints_2D!(Points[1],Points[2],  Points[1], Points[2], RotMat)
+
+        Vx_rot, Vz_rot  = zeros(size( Points[1])), zeros(size( Points[1]));
+        Vx, Vz          = zeros(size( Points[1])), zeros(size( Points[1]));
+            
+        if Type=="SquareDike"
+            @unpack H,W = dike
+            Vint    =  Δ/dt/2.0;                        # open the dike by a maximum amount of Δ in one dt (2=because we open 2 sides)
+                
+            Vz_rot[(Points[2] .<= 0) .& (abs.(Points[1]).<= W/2.0)]  .= -Vint;
+            Vz_rot[(Points[2] .>  0) .& (abs.(Points[1]).<  W/2.0)]  .=  Vint;
+
+            Vx_rot[abs.(Points[1]).<W]          .=   0.0;      # set radial velocity to zero at left boundary
+        elseif Type=="SquareDike_TopAccretion"
+                @unpack H,W = dike
+                Vint    =  Δ/dt/1.0;                        # open the dike by a maximum amount of Δ in one dt
+                    
+                Vz_rot[(Points[2] .<= 0) .& (abs.(Points[1]).<= W/2.0)]  .= -Vint;
+                #Vz_rot[(Points[2] .>  0) .& (abs.(Points[1]).<  W/2.0)]  .=  Vint;
+    
+                Vx_rot[abs.(Points[1]).<=W]          .=   0.0;      # set radial velocity 
+    
+        elseif   Type=="CylindricalDike_TopAccretion" 
+            @unpack H,W = dike
+            Vint    =  Δ/dt/1.0;                        # open the dike by a maximum amount of Δ in one dt 
+                
+            Vz_rot[(Points[2] .<= 0) .& ( Points[1]  .<= (W/2.0))]  .= -Vint;
+            #Vz_rot[(Points[2] .>  0) .& (abs.(Points[1]).<  W/2.0)]  .=  Vint;
+
+            Vx_rot[abs.(Points[1]).<=W]          .=   0.0;      # set radial velocity 
+
+        elseif  Type=="CylindricalDike_TopAccretion_FullModelAdvection"
+            @unpack H,W = dike
+            Vint    =  Δ/dt/1.0;                        # open the dike by a maximum amount of Δ in one dt (2=because we open 2 sides)
+                
+            Vz_rot[(Points[2] .<= 0) ]  .= -Vint;
+            #Vz_rot[(Points[2] .>  0) .& (abs.(Points[1]).<  W/2.0)]  .=  Vint;
+
+            Vx_rot[abs.(Points[1]).<=W] .=   0.0;      # set radial velocity to zero at left boundary
+
+        elseif Type=="ElasticDike"
+                @unpack H,W = dike
+                Vint    =  Δ/dt;                            # open the dike by a maximum amount of Δ in one dt (no 1/2 as that is taken care off inside the routine below)
+                
+Threads.@threads for i in eachindex(Vz_rot)
+                    # use elastic dike solution to compute displacement
+                    Displacement, Bmax = DisplacementAroundPennyShapedDike(dike, SVector(Points[1][i], Points[2][i]), dim);
+
+                    Displacement    .=  Displacement/Bmax;     # normalize such that 1 is the maximum
+                        
+                    Vz_rot[i]       =   Vint.*Displacement[2];
+                    Vx_rot[i]       =   Vint.*Displacement[1];      
+             
+                end
+
+        elseif Type == "EllipticalIntrusion" 
+                @unpack H,W = dike
+                AR  = H/W         # aspect ratio of ellipse
+                H   = Δ           # we don't open the dike @ once but piece by piece
+                W   = H/AR;
+                a_inject    =   W/2.0;                  # half axis
+                Vol_inject  =   4/3*pi*a_inject^3*AR    # b axis = a_inject*AR
+                for I in eachindex(Points[1])
+                    x  =    Points[1][I]
+                    z  =    Points[2][I]
+                    a  =    sqrt(z^2/AR^2 + x^2);
+                    a3 =    a^3;
+                    da =   ((Vol_inject + 4/3*pi*a3*AR)/(4/3*pi*AR))^(1/3) - a; # incremental displcement
+
+                    # note the the coordinates are already rotated & centered around the sill intrusion region
+                    Vx_rot[I]  = x*(da./a);
+                    Vz_rot[I]  = z*(da./a);
+                    if x==0 && z==0.0
+                        Vx_rot[I]=0.0
+                        Vz_rot[I]=0.0
+                    end
+                end
+
+
+        else
+            error("Unknown Dike Type: $Type")
+        end
+
+        # "unrotate" vector fields and points using the transpose of RotMat
+        RotatePoints_2D!(Vx,Vz, Vx_rot,Vz_rot, RotMat')
+        RotatePoints_2D!(Points[1], Points[2],  Points[1],  Points[2],   RotMat')
+
+        Points[1]   .= Points[1] .+ dike.Center[1];
+        Points[2]   .= Points[2] .+ dike.Center[2];
+
+        return (Vx, Vz);
+
+    else
+        @unpack Angle,Type   =   dike;
+        α,β             =   Angle[1], Angle[end];
+        RotMat_y        =   SMatrix{3,3}([cosd(α) 0.0 -sind(α); 0.0 1.0 0.0; sind(α) 0.0 cosd(α)  ]);                      # perpendicular to y axis
+        RotMat_z        =   SMatrix{3,3}([cosd(β) -sind(β) 0.0; sind(β) cosd(β) 0.0; 0.0 0.0 1.0  ]);                      # perpendicular to z axis
+        RotMat          =   RotMat_y*RotMat_z;
+
+       # Xrot,Yrot,Zrot  =   zeros(size(Points[1])),  zeros(size(Points[2])), zeros(size(Points[3]));
+        Points[1]       .=  Points[1] .- dike.Center[1];
+        Points[2]       .=  Points[2] .- dike.Center[2];
+        Points[3]       .=  Points[3] .- dike.Center[3];
+        RotatePoints_3D!(Points[1],Points[2],Points[3], Points[1],Points[2],Points[3], RotMat)                 # rotate coordinates 
+       
+        Vx_rot, Vy_rot, Vz_rot  = zeros(size(Points[1])), zeros(size(Points[2])), zeros(size(Points[3]));
+        Vx, Vy, Vz              = zeros(size(Points[1])), zeros(size(Points[2])), zeros(size(Points[3]));
+        
+        if Type=="SquareDike"
+            @unpack H,W = dike                          # Dimensions of square dike
+            Vint    =  Δ/dt/2.0;                        # open the dike by a maximum amount of Δ in one dt (2=because we open 2 sides)
+                
+            Vz_rot[(Points[3].<0) .& (abs.(Points[1]).<W/2.0) .& (abs.(Points[2]).<W/2.0)]  .= -Vint;
+            Vz_rot[(Points[3].>0) .& (abs.(Points[1]).<W/2.0) .& (abs.(Points[2]).<W/2.0)]  .=  Vint;
+
+            Vx_rot[abs.(Points[1]).<W]          .=   0.0;      # set radial velocity to zero at left boundary
+            Vy_rot[abs.(Points[2]).<W]          .=   0.0;      # set radial velocity to zero at left boundary
+
+        elseif  (Type=="SquareDike_TopAccretion") 
+                @unpack H,W = dike                          # Dimensions of square dike
+                Vint    =  Δ/dt/1.0;                        # open the dike by a maximum amount of Δ in one dt (2=because we open 2 sides)
+                    
+                Vz_rot[(Points[3].<0) .& (abs.(Points[1]).<W/2.0) .& (abs.(Points[2]).<W/2.0)]  .= -Vint;
+               # Vz_rot[(Points[3].>0) .& (abs.(Points[1]).<W/2.0) .& (abs.(Points[2]).<W/2.0)]  .=  Vint;
+    
+                Vx_rot[abs.(Points[1]).<W]          .=   0.0;      # set radial velocity to zero at left boundary
+                Vy_rot[abs.(Points[2]).<W]          .=   0.0;      # set radial velocity to zero at left boundary
+        elseif  (Type=="CylindricalDike_TopAccretion") || (Type=="CylindricalDike_TopAccretion_FullModelAdvection")
+                @unpack H,W = dike                          # Dimensions of square dike
+                Vint    =  Δ/dt/1.0;                        # open the dike by a maximum amount of Δ in one dt (2=because we open 2 sides)
+                    
+                Vz_rot[(Points[3] .<= 0.0) .& ( (Points[1].^2 + Points[2].^2).<=(W/2.0).^2) ]  .= -Vint;
+               # Vz_rot[(Points[3].>0) .& (abs.(Points[1]).<W/2.0) .& (abs.(Points[2]).<W/2.0)]  .=  Vint;
+    
+                Vx_rot[abs.(Points[1]).<= W]          .=   0.0;      # set radial velocity to zero at left boundary
+                Vy_rot[abs.(Points[2]).<= W]          .=   0.0;      # set radial velocity to zero at left boundary
+    
+        elseif Type=="ElasticDike"
+                @unpack H,W = dike                          # Dimensions of dike
+                Vint    =  Δ/dt;                            # open the dike by a maximum amount of Δ in one dt (no 1/2 as that is taken care off inside the routine below)
+                    
+                Threads.@threads for i=firstindex(Vx_rot):lastindex(Vx_rot)
+                 
+                    # use elastic dike solution to compute displacement
+                    Displacement, Bmax  = DisplacementAroundPennyShapedDike(dike, SVector(Points[1][i], Points[2][i], Points[3][i]), dim);
+
+                    Displacement        .=  Displacement/Bmax;     # normalize such that 1 is the maximum
+                    
+                    Vz_rot[i]           =   Vint.*Displacement[3];
+                    Vy_rot[i]           =   Vint.*Displacement[2];      
+                    Vx_rot[i]           =   Vint.*Displacement[1];      
+
+                end
+
+        else
+            error("Unknown Dike Type: $Type")
+        end
+
+        # "unrotate" vector fields
+        RotatePoints_3D!(Vx,Vy,Vz, Vx_rot,Vy_rot,Vz_rot, RotMat')           # rotate velocities back
+        RotatePoints_3D!( Points[1], Points[2], Points[3], Points[1]  ,Points[2]  ,Points[3]  , RotMat')           # rotate coordinates back
+        
+        Points[1]   .=  Points[1] .+ dike.Center[1];
+        Points[2]   .=  Points[2] .+ dike.Center[2];
+        Points[3]   .=  Points[3] .+ dike.Center[3];
+
+        return (Vx, Vy, Vz);
+
+    end
+
+
+end
+
+# 进行injectdike时需要的函数
+function  RotatePoints_2D!(Xrot,Zrot, X,Z, RotMat)
+    @simd for i in eachindex(X) # linear indexing
+        pt_rot      =   RotMat*SVector(X[i], Z[i]);
+        Xrot[i]     =   pt_rot[1]
+        Zrot[i]     =   pt_rot[2]
+    end
+end
+
+function  RotatePoints_3D!(Xrot,Yrot,Zrot, X,Y,Z, RotMat)
+    @simd for i in eachindex(X) # linear indexing
+        pt_rot      =   RotMat*SVector(X[i], Y[i], Z[i]);
+
+        Xrot[i]     =   pt_rot[1]
+        Yrot[i]     =   pt_rot[2]
+        Zrot[i]     =   pt_rot[3]
+    end
+end
+
+# 与循环配合使用   计算位移与B最大值进行归一化
+function DisplacementAroundPennyShapedDike(dike::Dike, CartesianPoint::SVector, dim)
+
+    # extract required info from dike structure
+    @unpack ν,E,W, H = dike;
+
+    Displacement = Vector{Float64}(undef, dim);
+
+    # Compute r & z; note that the Sun solution is defined for z>=0 (vertical)
+    if      dim==2; r = sqrt(CartesianPoint[1]^2);                       z = abs(CartesianPoint[2]); 
+    elseif  dim==3; r = sqrt(CartesianPoint[1]^2 + CartesianPoint[2]^2); z = abs(CartesianPoint[3]); end
+
+    if r==0; r=1e-3; end
+
+    B::Float64   =  H;                          # maximum thickness of dike
+    a::Float64   =  W/2.0;                      # radius
+
+    # note, we can either specify B and a, and compute pressure p and injected volume Q
+    # Alternatively, it is also possible to:
+    #       - specify p and a, and compute B and Q 
+    #       - specify volume Q & p and compute radius and B 
+    #
+    # What is best to do is to be decided later (and doesn't change the code below) 
+    Q   =   B*(2pi*a.^2)/3.0;               # volume of dike (follows from eq. 9 and 10a)
+    p   =   3E*Q/(16.0*(1.0 - ν^2)*a^3);    # overpressure of dike (from eq. 10a) = 3E*pi*B/(8*(1-ν^2)*a)
+
+    # Compute displacement, using complex functions
+    R1  =   sqrt(r^2. + (z - im*a)^2);
+    R2  =   sqrt(r^2. + (z + im*a)^2);
+
+    # equation 7a:
+    U   =   im*p*(1+ν)*(1-2ν)/(2pi*E)*( r*log( (R2+z+im*a)/(R1 +z- im*a)) 
+                                                - r/2*((im*a-3z-R2)/(R2+z+im*a) 
+                                                + (R1+3z+im*a)/(R1+z-im*a)) 
+                                                - (2z^2 * r)/(1 -2ν)*(1/(R2*(R2+z+im*a)) -1/(R1*(R1+z-im*a))) 
+                                                + (2*z*r)/(1-2ν)*(1/R2 - 1/R1) );
+    # equation 7b:
+    W   =       2*im*p*(1-ν^2)/(pi*E)*( z*log( (R2+z+im*a)/(R1+z-im*a)) 
+                                                - (R2-R1) 
+                                                - 1/(2*(1-ν))*( z*log( (R2+z+im*a)/(R1+z-im*a)) - im*a*z*(1/R2 + 1/R1)) );
+
+    # Displacements are the real parts of U and W. 
+    #  Note that this is the total required elastic displacement (in m) to open the dike.
+    #  If we only want to open the dike partially, we will need to normalize these values accordingly (done externally)  
+    Uz   =  real(W);  # vertical displacement should be corrected for z<0
+    Ur   =  real(U);
+    if (CartesianPoint[end]<0); Uz = -Uz; end
+    if (CartesianPoint[1]  <0); Ur = -Ur; end
+    
+    if      dim==2
+        Displacement = [Ur;Uz] 
+    elseif  dim==3
+        # Ur denotes the radial displacement; in 3D we have to decompose this in x and y components
+        x   = abs(CartesianPoint[1]); y = abs(CartesianPoint[2]);
+        Ux  = x/r*Ur; Uy = y/r*Ur;
+
+        Displacement = [Ux;Uy;Uz] 
+    end
+
+    return Displacement, B, p   
+end
+
+
+# advectpoint时遇到的修正点的范围
+function CorrectBounds!(Points, Grid);
+
+    #Points_new  = map(x->x.*0, Points) ; # initialize to 0
+    for i=1:length(Grid);
+        Points[i][Points[i].<minimum(Grid[i])]      .=      minimum(Grid[i]); 
+        Points[i][Points[i].>maximum(Grid[i])]      .=      maximum(Grid[i]); 
+    end
+end
+
+# evaluate_interp_2D 评估插值(并行)
+function evaluate_interp_2D(s, itp, Points_irregular)
+    # Threads.@threads 这个宏是Julia自带的Base模块中的，不是第三方包的内容。
+            Threads.@threads    for i=firstindex(Points_irregular[1]):lastindex(Points_irregular[1])
+                    s[i]    = itp(Points_irregular[1][i],Points_irregular[2][i]);
+                end
+end
+function evaluate_interp_3D(s, itp, Points_irregular)
+    Threads.@threads    for i=firstindex(Points_irregular[1]):lastindex(Points_irregular[1])
+                            s[i]    = itp(Points_irregular[1][i],Points_irregular[2][i],Points_irregular[3][i]);
+                        end
+    end
+    
+# 插值调用Interpolation.jl包中的函数进行插值
+
+function Interpolate!(Data_interp, Grid,  Data_grid, Points_irregular, InterpolationMethod="Linear");
+    #  evaluate_interp_2D(Data_interp[iField], interp,Points_irregular);
+
+    dim::Int8           =   length(Grid);           # number of dimensions
+    nField ::Int8       =   length(Data_grid);      # number of fields
+    iField::Int64       =   0;
+
+    CorrectBounds!(Points_irregular, Grid);  
+    # 把Points_irregular中超出Grid(初始网格定义范围)的点，Correct到Grid范围内。
+    # 实际上对于插值Tnew时该步骤不必须，因为在插值velocity最后已经进行了检查
+
+    for iField=1:nField # nFIeld == 2
+        
+        # Select the interpolation method & scale
+        if      InterpolationMethod=="Linear"
+            # 选这个
+            # Data_grid==Velocity == (Vx,Vz)
+            #interp      =   LinearInterpolation(Grid, Data_grid[iField],        extrapolation_bc = Throw());    
+            itp         =   interpolate(Data_grid[iField], BSpline(Linear()));
+            """
+            # 注意这里的 interpolate 函数不是src文件夹中的，而是“Interpolations.jl”包里的。
+            """
+        elseif  InterpolationMethod=="Cubic"
+            #interp      =   CubicSplineInterpolation(Grid, Data_grid[iField],   extrapolation_bc = Throw());    
+            itp         =   interpolate(Data_grid[iField], BSpline(Cubic(Line(OnCell()))));
+        elseif  InterpolationMethod=="Quadratic"
+            itp         =   interpolate(Data_grid[iField], BSpline(Quadratic(Line(OnCell()))));
+        else
+            error("Unknown interpolation method $InterpolationMethod")
+        end
+
+        if dim==2
+            # 选这个
+            interp  =   scale(itp,Grid[1],Grid[2]);
+        else
+            interp  =   scale(itp,Grid[1],Grid[2],Grid[3]);
+        end
+
+        # do interpolation for all points
+        if dim==2
+            # 选这个
+            evaluate_interp_2D(Data_interp[iField], interp,Points_irregular);
+        elseif dim==3
+            evaluate_interp_3D(Data_interp[iField], interp,Points_irregular);
+        end
+    
+    end
+
+end
+
+
+# AdvPoints
+function AdvectPoints(AdvPoints0, Grid,Velocity,dt, Method="RK2", InterpolationMethod="Linear", VelocityMethod="Interpolation", DikeStruct=[], Δ=1.0);
+    dim         = length(AdvPoints0);           # number of dimensions
+    # dim == 2
+    AdvPoints   = map(x->x.*0, AdvPoints0) ;    # initialize to 0
+
+    if dim==2
+
+        Velocity_int    = (zeros(size(AdvPoints0[1])), zeros(size(AdvPoints0[2])));
+        # 同样生成了一个包含两个(500，500)大小的0值矩阵的元组
+        # 与AdvPoints一样
+    elseif dim==3
+        Velocity_int    = (zeros(size(AdvPoints0[1])), zeros(size(AdvPoints0[2])),zeros(size(AdvPoints0[3])));
+    end
+
+    # Different advection schemes can be used
+    if Method=="Euler"
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints0, InterpolationMethod);    
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints0, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end
+
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt;  
+        end
+        CorrectBounds!( AdvPoints , Grid);
+        
+    elseif Method=="RK2"
+        # 选这个 2th RangaKutta advection method
+        if VelocityMethod=="Interpolation"
+            # 选这个 
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints0, InterpolationMethod);  
+            # VxA   
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints0, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end  
+       
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt/2.0; 
+            # xB = xA + VxA*dt/2(在这里)
+        end    
+        CorrectBounds!( AdvPoints , Grid);                               # step k1
+
+        # Interpolate velocity values on deformed grid
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints, InterpolationMethod); 
+            # VxB
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end  
+
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt;  
+            # VxA(t+dt) = VxA(t) + Veff *dt (Veff == VxB in RK2)
+
+            # Advection step 符合预期
+        end    
+        CorrectBounds!( AdvPoints , Grid);                               # step k2
+        # 已经更正完毕 Here！！
+    elseif Method=="RK4"
+        
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints0, InterpolationMethod);  
+            # VxA(Velocity——>xA(AdvPoints0))  
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints0, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end   
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt/2.0;  
+            # xB(xA + VxA*dt/2)
+        end    
+        CorrectBounds!( AdvPoints , Grid);                               # step k1
+        
+        # Interpolate velocity values on deformed grid
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints, InterpolationMethod);    
+            # VxB（Velocity——>xB(AdvPoints)）
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end   
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt/2.0;  
+            # xC(xA + VxB*dt/2)
+        end    
+        CorrectBounds!( AdvPoints , Grid);                               # step k2
+        
+        # Interpolate velocity values on deformed grid
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints, InterpolationMethod);
+            # VxC(Velocity——>xC(AdvPoints))    
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end  
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt/2.0;  
+            # xD((xA + VxC*dt/2)) 区别1: dt 变为 dt/2
+        end    
+        CorrectBounds!( AdvPoints , Grid);                               # step k3
+
+        # Interpolate velocity values on deformed grid
+        if VelocityMethod=="Interpolation"
+            Interpolate!(Velocity_int, Grid, Velocity, AdvPoints, InterpolationMethod); 
+            # VxD(Velocity——>xD(AdvPoints))
+        elseif VelocityMethod=="FromDike"
+            Velocity_int    =   HostRockVelocityFromDike(Grid, AdvPoints, Δ, abs(dt), DikeStruct);          # compute velocity field
+        end    
+        for i=1:dim; 
+            AdvPoints[i]  .= AdvPoints0[i] .+ Velocity_int[i].*dt;  
+            # xA(t+dt) = xA(t) + VxD.*dt  区别2: Veff 变为 VxD
+        end             
+        CorrectBounds!( AdvPoints , Grid);                               # step k4
+        
+    else
+        error("Unknown advection method: $Method")
+    end
+
+    return AdvPoints;
+end
+
+
+# AdvectTemperature
+function AdvectTemperature( T::Array,Grid, PointsAdv0, Velocity, dt, Method="RK2", DataInterpolationMethod="Quadratic", VelocityMethod="Interpolation", DikeStruct=[], Δ=1 );
+    
+    dim  = length(Grid);#2
+    Tnew = tuple(T);# 将地热矩阵封装为元组
+    """
+    julia> Tnew
+    ([600.0 598.7975951903808 … 1.2024048096192386 -0.0; 600.0 598.7975951903808 … 1.2024048096192386 -0.0; … ; 600.0 598.7975951903808 … 1.2024048096192386 -0.0; 600.0 598.7975951903808 … 1.2024048096192386 -0.0],)    julia> length(Tnew)
+    1
+    """
+    # 1) Use semi-lagrangian advection to advect temperature
+    # Advect regular grid backwards in time
+    """
+    Method == "RK2" (advection method)
+    PointsAdv0 = GridFull
+    "-dt" Why??? 这里使用-dt的原因应该是速度场计算出来上下是往中间汇集的
+    但实际上打开岩脉应该是上边物质点向上走，下边物质点向下走(存疑)
+    VelocityMethod="Interpolation"
+    DikeStruct=[]
+    Δ=1
+    """
+    PointsAdv = AdvectPoints(PointsAdv0, Grid,Velocity,-dt,Method, "Linear", VelocityMethod, DikeStruct, Δ);
+    # 返回了经过 RK2 Advection Method 对流后的Points点位分布
+    # 速度插值方法用的 "Linear" 借助了"Interpolation.jl" 
+    # 2) Interpolate temperature on deformed points
+    Interpolate!( Tnew, Grid, tuple(T), PointsAdv, DataInterpolationMethod);    
+    # Tnew此时已经是一个含有单个地热矩阵的元组了
+    return Tnew[1];
+
+end
+
+
+function AdvectTracers!(Tracers, Grid, Velocity, dt, Method="RK2");
+    # Advect tracers forward in time & interpolate T on them 
+    """
+    Tracers = Tracers
+    Grid = Grid.coord1D
+    Velocity = (Vx,Vz)
+    dt = 1/nsteps
+    """
+    dim             =   length(Grid);
+    coord     =   hcat(Tracers.coord...)';    # extract array with coordinates of tracers
+    
+    x   = coord[:,1];
+    z   = coord[:,end];
+    if dim==2
+        Points_irregular    =   (x,z);
+    else
+        y                   =   coord[:,2];
+        Points_irregular    =   (x,y,z);
+    end
+
+    CorrectBounds!(Points_irregular, Grid);# 检查是否在Grid范围内
+
+    # Advect
+    Points_new              =   AdvectPoints(Points_irregular,  Grid,Velocity, dt,Method,  "Linear");     # Advect tracers
+    # 利用Points上的速度场对流Tracers所在的坐标
+    # function to assign properties
+    function testnoalloc_2D(sarr, val)
+        for (Tracer,x,z) in zip(LazyRows(sarr), val[1], val[2])
+            Tracer.coord = [x;z];
+        end
+    end
+
+    function testnoalloc_3D(sarr, val)
+        for (Tracer,x,y,z) in zip(LazyRows(sarr), val[1], val[2], val[3])
+            Tracer.coord = [x; y; z];
+        end
+    end
+
+    if dim==2
+        # 更新对流后的坐标
+        testnoalloc_2D(Tracers, Points_new);
+    else
+        testnoalloc_3D(Tracers, Points_new);
+    end
+
+end
+
+
+function isinside_dike(pt, dike::Dike)
+    """
+    变量内改名:
+    Type = Typeisin
+    pt = ar
+    """
+    # important: this is a "unit" dike, which has the center at [0,0,0] and width given by dike.Size
+    dim =   length(pt) # 检查这个点的维度
+    in  =   false;     # 首先假设不在dike内
+    @unpack Type,W,H = dike; # 
+    if Type=="SquareDike"
+        if  dim==2
+            if  (abs(pt[1])  < W/2.0) & (abs(pt[end])< H/2.0)
+                in = true
+            end
+        elseif dim==3
+            if  (abs(pt[1])  < W/2.0) & (abs(pt[end])< H/2.0) & (abs(pt[2])< W/2.0)
+                in = true
+            end
+        end
+    elseif  (Type=="SquareDike_TopAccretion") || (Type=="CylindricalDike_TopAccretion") || (Type=="CylindricalDike_TopAccretion_FullModelAdvection")
+        if  dim==2
+            if  (abs(pt[1])  <= W/2.0) & (abs(pt[end]) <= H/2.0)
+                in = true
+            end
+        elseif dim==3
+            error("add 3D case here")
+            if  (abs(pt[1])  < W/2.0) & (abs(pt[end])< H/2.0) & (abs(pt[2])< W/2.0)
+                in = true
+            end
+        end
+    elseif (Type=="ElasticDike") || (Type=="EllipticalIntrusion")
+        eq_ellipse = 100.0; # 先定义一个不小于1的数字
+        # ellipse == 椭圆
+        if dim==2
+            eq_ellipse = (pt[1]^2.0)/((W/2.0)^2.0) + (pt[2]^2.0)/((H/2.0)^2.0); # ellipse
+            # 公式实际上是:x^2/a^2 + z^2/b^2 <? 1
+        elseif dim==3
+            # radius = sqrt(*)x^2+y^2)
+            eq_ellipse = (pt[1]^2.0 + pt[2]^2.0)/((W/2.0)^2.0) + (pt[3]^2.0)/((H/2.0)^2.0); # ellipsoid
+        else
+            error("Unknown # of dimensions: $dim")
+        end
+
+        if eq_ellipse <= 1.0
+            in = true;
+        end
+        """
+        举例:(253,295)
+        julia> eq_ellipse = (ar[1]^2.0)/((W/2.0)^2.0) + (ar[2]^2.0)/((H/2.0)^2.0)
+        0.004079092757417331
+        julia> ar[1]
+        6.571827907630093
+        julia> ar[2]
+        6.381365472913874
+        """
+    else
+        error("Unknown dike type $Type")
+    end
+
+    return in 
+end
+
+function volume_dike(dike::Dike)
+    # important: this is a "unit" dike, which has the center at [0,0,0] and width given by dike.Size
+    @unpack W, H, Type =dike
+
+    if Type=="SquareDike"
+        area    = W*H;                  #  (in 2D, in m^2)
+        volume  = W*W*H;                #  (equivalent 3D volume, in m^3)
+    elseif Type=="SquareDike_TopAccretion"
+        area    = W*H;                  #  (in 2D, in m^2)
+        volume  = W*W*H;                #  (equivalent 3D volume, in m^3)
+    elseif (Type=="CylindricalDike_TopAccretion") || (Type=="CylindricalDike_TopAccretion_FullModelAdvection")
+        area    = W*H;                  #  (in 2D, in m^2)
+        volume  = pi*(W/2.0)^2*H;       #  (equivalent 3D volume, in m^3)
+
+    elseif (Type=="ElasticDike") || (Type=="EllipticalIntrusion")
+        
+        area    = pi*W/2*H/2                    #   (in 2D, in m^2)  - note that W,H are the diameters
+        volume  = 4/3*pi*(W/2)*(W/2)*(H/2)      #   (equivalent 3D volume, in m^3)
+    else
+        error("Unknown dike type $Type")
+    end
+
+    return area,volume;
+
+end
+function createcoord()
+    # 坐标系的范围
+    x_min = 0
+    x_max = 30e3
+    # 点的总数
+    num_points = 500
+    # 计算 dx
+    dx = (x_max-x_min) / (num_points - 1)
+    # 生成点的坐标向量
+    # 从 dx/4 开始，每次增加 dx/2
+    pointsx = x_min+dx/4 .+ (0:(num_points-2)*2+1) .* (dx/2)
+    # 坐标系的范围
+    z_min = -30e3
+    z_max = 0
+    num_points=500
+    # 计算 dx
+    dz = (z_max-z_min) / (num_points - 1)
+    # 生成点的坐标向量
+    # 从 dz/4 开始，每次增加 dz/2
+    pointsz = z_min+dz/4 .+ (0:(num_points-2)*2+1) .* (dz/2)
+    return pointsx,pointsz;
+end
+"""
+# 引用方式
+# Tracers = Addrock_tracers2D(Arrays.T,Tracers, Grid.coord1D)
+"""
+function Addrock_tracers2D(Tfield,Tr, Grid)
+    PhaseRock = 1;
+    # T interpolation 
+    Bound_min = minimum.(Grid)
+    Bound_max = maximum.(Grid)
+    N         = length.(Grid)
+    Δx = Grid[1][2]-Grid[1][1]
+    Δz = Grid[2][2]-Grid[2][1]
+    
+    # number of TracerRock
+    Nx_tracers = (length(Grid[1])-1)*2;
+    Nz_tracers = (length(Grid[2])-1)*2;
+
+    # coord of TracerRock
+    pointsx,pointsz = createcoord();# 需要函数内部进行参数化!
+    # add Tracer of Rock
+    for jm=1:1:Nx_tracers
+        for im=1:1:Nz_tracers
+            pt_x = pointsx[jm];
+            pt_z = pointsz[im];
+            pt_new = [pt_x,pt_z];
+            if !isassigned(Tr,1)  # yes
+                number  =   1;              # 这行代码只在加入第一个Tracers时执行 
+            else     
+                number  =   Tr.num[end]+1;  # 这行代码在加入第一个Tracers后一直执行
+            end
+            T = interpolate_linear_2D(pt_x, pt_z, Bound_min, N, Δx, Δz, Tfield)
+            new_tracer  =   Tracer(num=number, coord=pt_new, T=T, Phase=PhaseRock);  
+            if !isassigned(Tr,1)
+                # 这段代码只在加入第一个Tracers类型时执行 
+                if length(Tr)==0
+                    # 实际上下面这个if语句自始至终都不会执行,因为即使是undef,长度也不会为0
+                    StructArrays.foreachfield(v -> deleteat!(v, 1), Tr)         # Delete first (undefined) row of tracer StructArray. Assumes that Tr is defined as Tr = StructArray{Tracer}(undef, 1)
+                end
+                Tr      =   StructArray([new_tracer]);                      # Create tracer array
+            else
+                # 这行代码在加入第一个Tracers后一直执行
+                push!(Tr, new_tracer);                                      # Add new point to existing array
+            end
+        end
+    end
+    return Tr;
+end
+
+
+function AddDike(Tfield,Tr, Grid,dike, nTr_dike)
+    # 用到函数有:isinside_dike
+    """
+    Tfield = T;
+    Tr = Tracers; 
+    Gridadd = Grid_injectdike; # Grid-->Gridadd 函数内变量名更改
+    dike = dike;
+    nTr_dike = nTr_dike;
+    """
+    dim         =   length(Grid);
+    @unpack Angle,Center,W,H,T, Phase = dike;
+    PhaseDike = Phase;
+    
+    if dim==2
+        α           =    Angle[1];
+        RotMat      =    SMatrix{2,2}([cosd(α) -sind(α); sind(α) cosd(α)]); 
+    elseif dim==3
+        α,β             =   Angle[1], Angle[end];
+        RotMat_y        =   SMatrix{3,3}([cosd(α) 0.0  -sind(α); 0.0 1.0 0.0; sind(α) 0.0 cosd(α)  ]);                      # perpendicular to y axis
+        RotMat_z        =   SMatrix{3,3}([cosd(β) -sind(β) 0.0; sind(β) cosd(β) 0.0; 0.0 0.0 1.0   ]);                      # perpendicular to z axis
+        RotMat          =   RotMat_y*RotMat_z;
+    end
+  
+    # Add dike to temperature field
+    if dim==2
+        x,z = Grid[1], Grid[2];
+        for ix=1:length(x)
+            for iz=1:length(z)  
+                pt      =   SVector(x[ix],z[iz]) - Center;# 用(253,295)试一下
+                pt_rot  =   RotMat*pt;        # rotate  #为什么要旋转??
+                in      =   isinside_dike(pt_rot, dike);# 我猜他会给定一个与dike相关的范围
+                if in
+                    Tfield[ix,iz] = T;
+                end
+            end
+        end
+
+    elseif dim==3
+        x,y,z = Grid[1], Grid[2], Grid[3]
+        for ix=1:length(x)
+            for iy=1:length(y)
+                for iz=1:length(z)
+                    pt      = SVector(x[ix], y[iy], z[iz]) - Center;
+                    pt_rot  = RotMat*pt;          # rotate and shift
+                    in      = isinside_dike(pt_rot, dike);
+                    if in
+                        Tfield[ix,iy,iz] = T;# 900摄氏度,而不是K
+                    end
+                end
+            end
+        end
+
+    end
+
+    # Add new tracers to the dike area
+    for iTr=1:nTr_dike # iTr 不在循环内,仅仅为了加入300次 add 300 Tracers per dike 
+        """
+        Size --> sizeadd
+        """
+        # 1) Randomly initialize tracers to the approximate dike area
+        pt      = rand(dim,1) .- 0.5*ones(dim,1);# [0-1] - 0.5 two element(x,z)
+        if dim==2
+            Size = [W; H]; # sizeadd
+        else
+            Size = [W; W; H];
+        end
+
+        pt      = pt.*Size; # Size == sizeadd
+        pt_rot  = (RotMat')*pt .+ Center[:];          # rotate backwards (hence the transpose!) and shift
+        # 为什么旋转并移动:因为pt设置的位置就在dike附近,相当于以它为(0,0)设置的
+        # 因此要旋转回来.
+        # 2) Make sure that they are inside the dike area   
+        in      = isinside_dike(pt, dike);# 注意这里判断的是pt而不是pt_rot
+        # true 因为虽然已经在dike中心附近设置了,但还是担心不一定在dike内,因此再确认一下
+        # 让我进行一个10次的小实验:
+        """
+        julia> for i =1:10 atest      = rand(dim,1) .- 0.5*ones(dim,1);atest = atest.*sizeadd;in = isinside_dike(atest,dike); print(in); end
+        truefalsefalsetruetruetruetruetruetruetrue
+        显然也有不在里面的
+        """
+        # 3) Add them to the tracers structure
+        if in   # we are inside the dike
+            
+            if      dim==2; pt_new = [pt_rot[1]; pt_rot[2]];
+                             # Vector 转为Marix
+            elseif  dim==3; pt_new = [pt_rot[1]; pt_rot[2]; pt_rot[3]]; end
+            
+            if !isassigned(Tr,1)  # yes
+                number  =   1;              # 这行代码只在加入第一个Tracers时执行 
+            else     
+                number  =   Tr.num[end]+1;  # 这行代码在加入第一个Tracers后一直执行
+            end
+
+            new_tracer  =   Tracer(num=number, coord=pt_new, T=T, Phase=PhaseDike);          # Create new tracer
+            # 创建新的Tracers对象
+            if !isassigned(Tr,1)
+                # 这段代码只在加入第一个Tracers类型时执行 
+                # 实际上下面这个if语句自始至终都不会执行,因为他们
+                if length(Tr)==0
+                    StructArrays.foreachfield(v -> deleteat!(v, 1), Tr)         # Delete first (undefined) row of tracer StructArray. Assumes that Tr is defined as Tr = StructArray{Tracer}(undef, 1)
+                end
+                Tr      =   StructArray([new_tracer]);                      # Create tracer array
+            else
+                # 这行代码在加入第一个Tracers后一直执行
+                push!(Tr, new_tracer);                                      # Add new point to existing array
+            end
+        end
+
+    end
+
+    return Tfield, Tr;
+
+end
+
+function InjectDike(Tracers, T::Array, Grid, dike::Dike, nTr_dike::Int64; AdvectionMethod="RK2", InterpolationMethod="Linear", dike_poly=[])
+    # Grid == Grid.coord1D
+    # Some notes on the algorithm:
+    #   For computational reasons, we do not open the dike at once, but in sufficiently small pseudo timesteps
+    #   Sufficiently small implies that the motion per "pseudotimestep" cannot be more than 0.5*{dx|dy|dz}
+    
+    @unpack H   =   dike
+    dim         =   length(Grid);
+    Spacing     =   Vector{Float64}(undef, dim);
+    
+    if dim==2
+        coords      =   collect(Iterators.product(Grid[1],Grid[2]))                             # generate coordinates from 1D coordinate vectors   
+        X,Z         =   (x->x[1]).(coords), (x->x[2]).(coords);    
+        GridFull    =   (X,Z); 
+    elseif dim==3
+        coords      =   collect(Iterators.product(Grid[1],Grid[2],Grid[3]))                     # generate coordinates from 1D coordinate vectors   
+        X,Y,Z       =   (x->x[1]).(coords), (x->x[2]).(coords), (x->x[3]).(coords);     
+        GridFull    =   (X,Y,Z); 
+    end
+
+    for i=1:dim
+        Spacing[i] = Grid[i][2] - Grid[i][1];
+    end
+    d           =   minimum(Spacing)*0.5;  # 为什么这样计算??                            # maximum distance the dike can open per pseudotimestep 
+    # 函数注释中提到了,处于计算的原因要以足够小的伪时间步来打开岩脉
+    # 足够小意味着一次性打开岩脉不超过minimum(Spacing)*0.5
+    nsteps      =   maximum([ceil(H/d), 2]);  # 2的意思是不能一次移开主岩                         # the number of steps (>=10)
+    
+    # Compute velocity required to create space for dike
+    # 从这后面都是用的dtinj
+    dt          =   1.0/nsteps
+    Δ           =   H
+    # 这个文件中的Grid都是Grid_injectdike
+    Velocity    =   HostRockVelocityFromDike(Grid,GridFull, Δ, 1.0,dike);       # compute velocity field/displacement used for a full dt. 
+
+    # Move hostrock & already existing tracers to the side to create space for new dike
+    # 不仅移动host rock 还移动 existing tracers !!!
+    Tnew        =   zeros(size(T));
+    for ipseudotime=1:nsteps
+        # 这个循环简单循环7次,就是为了以7个步骤进行移开主岩的操作
+        Tnew        =   AdvectTemperature(T, Grid,  GridFull, Velocity, dt, AdvectionMethod, InterpolationMethod);                      # use interpolation of velocity from grid to advect T
+        #Tnew    =   AdvectTemperature(T, Grid,  GridFull, Velocity, dt, AdvectionMethod, InterpolationMethod, "FromDike", dike, Δ);    # optional method, in which we use the analytical velocity to advect T
+    
+        if isassigned(Tracers,1)
+            AdvectTracers!(Tracers,  Grid,    Velocity, dt);
+        end
+        T      .=   Tnew;# 是为了adddike时,代入的T是advection后的T
+    end
+
+    # Insert dike in T profile and add new tracers
+    Tnew,Tracers        =   AddDike(T, Tracers, Grid,dike, nTr_dike);                 # Add dike to T-field & insert tracers within dike
+
+    # Here  !!!
+
+
+    # Compute volume of newly injected magma
+    Area,InjectedVolume =   volume_dike(dike) 
+    # 实际上在2D模拟中每次加入的dike都一样,
+
+    # Advect dike polygon
+    if ~isempty(dike_poly)  # false 不执行
+        advect_dike_polygon!(dike_poly, Grid, Velocity)
+    end
+
+
+    return Tracers, Tnew, InjectedVolume, dike_poly, Velocity
+
+end
+
+
+# 问题就出在这里!!!!!!!
+@parallel function diffusion2D_step!(Tnew, T, qx, qz, K, Kx, Kz, Rho, Cp, H, Hl, dt, dx, dz,  dϕdT)   
+    @all(Kx)    =  @av_xa(K);                 # average K in x direction  K都是1.5 Kx也是
+    @all(Kz)    =  @av_ya(K);                 # average K in z direction  K都是1.5 Kz也是
+    @all(qx)    =  @all(Kx)*@d_xa(T)/dx;      # heatflux in x  
+    @all(qz)    =  @all(Kz)*@d_ya(T)/dz;      # heatflux in z
+    # qx = kx .* dT/dx  # 负号呢？？？！！！ 
+    # qz = kz .* dT/dz
+    # qx全为0，因为
+    # qz第一次计算出来不能很好地heatmap_no2 因为有最大值和最小值(尽管二者很相近)
+    @inn(Tnew)  =  @inn(T) + dt/(@inn(Rho)*(@inn(Cp) + @inn(Hl)*@inn(dϕdT)))* 
+                                 (        @d_xi(qx)/dx + 
+                                          @d_yi(qz)/dz +            # 2nd derivative 
+                                          @inn(H)                   # heat sources
+                                 );          
+    # @inn宏意思实际是在边界之内执行，没有更新Tnew的边界的原因是因为要对其实施边界条件。
+    # @all的意思则是在全局范围内执行。
+    return
+end
+
+# 修改3Revise
+function main_diffusion2D_step!(Tnew, T, qx, qz, K, Kx, Kz, Rho, Cp, H, Hl, dt, dx, dz,  dϕdT)   
+    dim = size(Kx);
+    Nx = dim[1];#499
+    Nz = dim[2];#500
+    dqxdx = zeros(Nx,Nz);#定义为(499,500)但实际用到的为(2:499,500)
+    dqzdz = zeros(Nz,Nx);#定义为(500,499)但实际用到的为(500,2:499)
+    for i in range(1,Nx)
+        for j in range(1,Nz)
+            #(499,500)
+            Kx[i,j] = (K[i,j] + K[i+1,j])/2;
+            qx[i,j] = Kx[i,j] * (T[i+1,j] - T[i,j])/dx;
+        end
+    end
+    for i in range(1,Nz)
+        for j in range(1,Nx)
+            #(500,499)
+            Kz[i,j] = (K[i,j] + K[i,j+1])/2;
+            qz[i,j] = Kz[i,j] * (T[i,j+1] - T[i,j])/dz;
+        end
+    end
+    for i in range(2,Nx)
+        for j in range(1,Nz)
+            #(2:499,500)
+            dqxdx[i,j] = (qx[i,j] - qx[i-1,j])/dx;
+
+        end
+    end
+    for i in range(1,Nz)
+        for j in range(2,Nx)
+            #(500,2:499)
+            dqzdz[i,j] = (qz[i,j] - qz[i,j-1])/dz;
+        end
+    end
+    for i in range(2,Nx)
+        for j in range(2,Nx)
+            #(2:499,2:499)
+            Tnew[i,j] = T[i,j] + dt/(Rho[i,j]* (Cp[i,j] + Hl[i,j]*dϕdT[i,j]) ) * (dqxdx[i,j] + dqzdz[i,j] + H[i,j]);   
+        end
+    end
+    return
+end
+
+
+# 更新Tupdate
+@parallel function update_relaxed_picard!(Tupdate::AbstractArray, Tnew::AbstractArray, T_it_old::AbstractArray, ω::Number)
+    @all(Tupdate) = ω*@all(Tnew) + (1.0-ω)*@all(T_it_old)
+    return 
+end
+# 计算误差
+@parallel function update_Tbuffer!(A::AbstractArray, B::AbstractArray, C::AbstractArray)
+    @all(A) = @all(B) - @all(C)
+    return 
+end
+# Set x- boundary conditions to be zero-flux
+# 用了这个 for iy = 1:Nz
+# @parallel (1:Nz) bc2D_x!(Arrays.Tnew);                      # flux-free lateral boundary conditions
+@parallel_indices (iy) function bc2D_x!(T::AbstractArray) 
+    T[1  , iy] = T[2    , iy]
+    T[end, iy] = T[end-1, iy]
+    return
+end
+
+# Set z- boundary conditions to be isothernmal
+@parallel_indices (ix) function bc2D_T!(Tnew::AbstractArray, T::AbstractArray) 
+    # Tnew 的边界 == T 的边界 （温度） 因此成为等温或恒温边界条件   这也是为什么没有更新Tnew的边界的原因
+    Tnew[ix,1 ]    = T[ix, 1  ]
+    Tnew[ix, end]  = T[ix, end]
+    # Tnew(ix=1:Nx,iz=1) = T(ix=1:Nx,iz=1)
+    # Tnew(ix=1:Nx,iz=Nz) = T(ix=1:Nx,iz=Nz)
+    """
+    heatmap like below
+  Nx|
+    |
+  ix|
+    |
+   1|__ __ __ __ __ 
+    1    iz       Nz
+    """
+    return
+end
+# 修改2尝试自己加入的第一个函数
+"""
+# Citation format
+T_dependent_Kc_and_Cp!(Arrays.Kc,Arrays.Cp,Arrays.Rho,args1)
+"""
+function  T_dependent_Kc_and_Cp!(Kc,Cp,Rho,args1,Hl,dϕdT,Phi)
+
+    T = args1.T;
+    dim = size(Cp);
+    rows = dim[1];
+    cols = dim[2];
+    diffrate = similar(T);
+    for i in range(1,rows)
+        for j in range(1,cols)
+            """
+            玄武岩
+            """
+            a = 143.6;
+            b = -494.4;
+            c = 572.4;
+            d = -221.4;
+            t2 = (T[i,j]-273.15)*(T[i,j]-273.15)/1000/1000;
+            Phi[i,j] = exp(a + b * (T[i,j]-273.15)/1000 +c * t2 + d * t2 *(T[i,j]-273.15)/1000);
+            Phi[i,j] = 0.1e1 / (0.1e1+Phi[i,j]);
+            """
+            流纹岩
+            """
+            #Phi[i,j] = exp(0.961e3 - 0.359e1 * T[i,j] + 0.448e-2 * T[i,j] * T[i,j] - 0.187e-5 * T[i,j] *T[i,j] *T[i,j]);
+            #Phi[i,j] = 0.1e1 / (0.1e1+Phi[i,j] );
+            if (T[i,j] < 846)
+                Cp[i,j] = 199.50 .+ 0.0857 .* T[i,j] .- 5.0e6 .* T[i,j].^(-2);# mol-1
+                Cp[i,j] = Cp[i,j]/221.78*1000; # kg-1
+                # Cp[i,j] = 700; # [700,1350] 1350 yes ; 500 700 800 no
+
+                Kc[i,j] = 0.70 + 770/(350+T[i,j] - 273.15);# yes T-dependent
+                # Kc[i,j] = 1.5; # yes Constant
+
+            else
+                # Cp[i,j] = 229.32 .+ 0.0323 .* T[i,j] .- 47.9e-6 .* T[i,j].^(-2);
+                Cp[i,j] = 199.50 .+ 0.0857 .* T[i,j] .- 5.0e6 .* T[i,j].^(-2);# mol-1
+                Cp[i,j] = Cp[i,j]/221.78*1000; # kg-1
+                # Cp[i,j] = 700; # [700,1350]
+
+                Kc[i,j] = 0.70 + 770/(350+T[i,j] - 273.15); # yes T-dependent
+
+                # Kc[i,j] = 1.5; # yes Constant
+            end
+        end
+    end
+
+end
+
+function Nonlinear_Diffusion_step_2D!(Arrays, Mat_tup, Phases, Grid, dt, Num = Numeric_params())
+    err, iter = 1., 1   # 初始误差和迭代次数
+    @parallel assign!(Arrays.T_K, Arrays.T, 273.15) # 摄氏度转开尔文
+    @parallel assign!(Arrays.T_it_old, Arrays.T) # T给T_it_old
+    Nx, Nz = (Grid.N...,) # 坐标点数
+    args1  = (;T=Arrays.T_K, P=Arrays.P) # 命名元组，开温度(热矩阵)和压力(0)
+    # 变为K是因为传入"compute_meltfraction_ps!"函数时需要是k为单位
+    args2  = (;z=-Arrays.Z)   # "-"  要注意用的负号   垂直坐标
+    Tupdate = similar(Arrays.Tnew)    # 用于picard 迭代的Tupdate(0)             # relaxed picard update
+    Tbuffer = similar(Arrays.T)     # 可能是用来存储误差的
+    while err>Num.convergence && iter<Num.max_iter
+        # 1>0.0001 and 1<1500 进行迭代
+        T_dependent_Kc_and_Cp!(Arrays.Kc,Arrays.Cp,Arrays.Rho,args1,Arrays.Hl,Arrays.dϕdT,Arrays.ϕ)
+        # 这些参数都得到了更新
+        #@parallel (1:Nx, 1:Nz) compute_meltfraction_ps!(Arrays.ϕ, Mat_tup, Phases, args1) 
+        @parallel (1:Nx, 1:Nz) compute_dϕdT_ps!(Arrays.dϕdT, Mat_tup, Phases, args1)     
+        @parallel (1:Nx, 1:Nz) compute_density_ps!(Arrays.Rho, Mat_tup, Phases, args1)
+        @parallel (1:Nx, 1:Nz) compute_radioactive_heat_ps!(Arrays.Hr, Mat_tup, Phases, args2)   
+        @parallel (1:Nx, 1:Nz) compute_latent_heat_ps!(Arrays.Hl, Mat_tup, Phases, args1)   
+        # @parallel (1:Nx, 1:Nz) compute_heatcapacity_ps!(Arrays.Cp, Mat_tup, Phases, args1 )
+        # @parallel (1:Nx, 1:Nz) compute_conductivity_ps!(Arrays.Kc, Mat_tup, Phases, args1 )
+
+        # T_dependent Cp and Kc
+        # @parallel (1:Nx, 1:Nz) 
+        
+        if Num.deactivate_La_at_depth==true
+            @parallel (1:Nx,1:Nz) deactivate_dϕdT_ϕ_belowDepth!(Arrays.dϕdT, Arrays.ϕ, Arrays.Z, Num.deactivationDepth)
+            """
+            # 实际上Num.deactivationDepth 没有定义，因为这段代码不会被执行，除非重新定义Num
+            """
+        end
+
+        # Diffusion step:
+        if Num.axisymmetric==true
+            @parallel diffusion2D_AxiSymm_step!(Arrays.Tnew, Arrays.T, Arrays.R, Arrays.Rc, Arrays.qx, Arrays.qz, Arrays.Kc, Arrays.Kx, Arrays.Kz, 
+                                                Arrays.Rho, Arrays.Cp, Arrays.Hr, Arrays.Hl, dt, Grid.Δ[1], Grid.Δ[2], Arrays.dϕdT) # axisymmetric diffusion step
+        else
+            # 执行这个
+            # @parallel diffusion2D_step!(Arrays.Tnew, Arrays.T, Arrays.qx, Arrays.qz, Arrays.Kc, Arrays.Kx, Arrays.Kz, 
+             #                           Arrays.Rho, Arrays.Cp, Arrays.Hr, Arrays.Hl, dt, Grid.Δ[1], Grid.Δ[2], Arrays.dϕdT) # 2D diffusion step
+            main_diffusion2D_step!(Arrays.Tnew, Arrays.T, Arrays.qx, Arrays.qz, Arrays.Kc, Arrays.Kx, Arrays.Kz, 
+                                       Arrays.Rho, Arrays.Cp, Arrays.Hr, Arrays.Hl, dt, Grid.Δ[1], Grid.Δ[2], Arrays.dϕdT) # 2D diffusion step
+                           
+        end
+        # x BC
+        @parallel (1:Nz) bc2D_x!(Arrays.Tnew);                      # flux-free lateral boundary conditions
+        
+        if Num.flux_bottom_BC==true
+            # false
+            @parallel (1:Nx) bc2D_z_bottom_flux!(Arrays.Tnew, Arrays.Kc, Grid.Δ[2], Num.flux_bottom);     # flux-free bottom BC with specified flux (if false=isothermal) 
+        else
+            # 选这个
+            #z BC
+            @parallel (1:Nx) bc2D_T!(Arrays.Tnew, Arrays.T);        # isothermal BC's
+        end
+        
+        # Use a relaxed Picard iteration to update T used for (nonlinear) material properties:
+        @parallel update_relaxed_picard!(Tupdate, Arrays.Tnew, Arrays.T_it_old, Num.ω)
+        @parallel assign!(args1.T, Tupdate,  273.15)   # all GeoParams routines expect T in K
+        @parallel update_Tbuffer!(Tbuffer, Arrays.Tnew, Arrays.T_it_old)
+        
+        # Compute error
+        err     = norm(Tbuffer)/maximum(Arrays.Tnew)
+        if Num.verbose==true
+            # false
+            println("  Nonlinear iteration $(iter), error=$(err)")
+        end
+        
+        @parallel assign!(Arrays.T_it_old, Tupdate)                   # Store Tnew of last iteration step
+        iter += 1
+
+
+
+        # testmiddle = copy(Arrays.Kc);
+    end
+    if iter==Num.max_iter
+        # 达到最大迭代次数还没有收敛 general no
+        println("WARNING: nonlinear iterations not converging. Final error=$(err). Reduce Δt, or the relaxation parameter Num.ω (=$(Num.ω)) [0-1]")
+    end
+    if Num.verbose==true
+        # false
+        println("  ----")
+    end
+
+    return nothing
+end
+
+
+#Util.jl
+function copy_arrays_GPU2CPU!(T_CPU::AbstractArray,  ϕ_CPU::AbstractArray, T_GPU::AbstractArray, ϕ_GPU::AbstractArray)
+
+    T_CPU  .= Array(T_GPU)
+    ϕ_CPU  .= Array(ϕ_GPU)
+    
+    return nothing 
+end
+# 修改1下面的函数
+"""
+function interpolate_linear_2D(pt_x, pt_z, Bound_min, N, Δx, Δz, Field )
+    ix      = floor(Int64, (pt_x - Bound_min[1])/Δx)
+    iz      = floor(Int64, (pt_z - Bound_min[2])/Δz)
+    
+    # deal with boundaries
+    ix      = min(ix,N[1]-2)
+    iz      = min(iz,N[2]-2)
+    ix      = max(ix,1)
+    iz      = max(iz,1)
+   
+    fac_x   = (pt_x - ix*Δx - Bound_min[1])/Δx     # distance to lower left point
+    fac_z   = (pt_z - iz*Δz - Bound_min[2])/Δz     # distance to lower left point
+   
+    # interpolate in x    
+    val_x_bot =  (1.0-fac_x)*Field[ix+1,iz+1] +  ( fac_x)*Field[ix+2,iz+1]
+    val_x_top =  (1.0-fac_x)*Field[ix+1,iz+2] +  ( fac_x)*Field[ix+2,iz+2]
+    
+    # Interpolate value in z
+    val    = (1.0-fac_z)*val_x_bot + fac_z*val_x_top
+
+    return val 
+end
+"""
+
+function interpolate_linear_2D(pt_x, pt_z, Bound_min, N, Δx, Δz, Field )
+    # 在这个插值中,对于超出边界的Tracers(magma/rock)不进行处理使得其特性不变.
+
+    ix      = floor(Int64, (pt_x - Bound_min[1])/Δx)
+    iz      = floor(Int64, (pt_z - Bound_min[2])/Δz)
+    
+    # deal with boundaries
+    ix      = min(ix,N[1]-2)
+    iz      = min(iz,N[2]-2)
+    ix      = max(ix,0)
+    iz      = max(iz,0)
+
+    fac_x   = (pt_x - ix*Δx - Bound_min[1])/Δx     # distance to lower left point
+    fac_z   = (pt_z - iz*Δz - Bound_min[2])/Δz     # distance to lower left point
+    # if ix == N[1]-1 || iz  == N[2]-1
+
+    # interpolate in x    
+    val_x_bot =  (1.0-fac_x)*Field[ix+1,iz+1] +  ( fac_x)*Field[ix+2,iz+1]
+    val_x_top =  (1.0-fac_x)*Field[ix+1,iz+2] +  ( fac_x)*Field[ix+2,iz+2]
+    
+    # Interpolate value in z
+    val    = (1.0-fac_z)*val_x_bot + fac_z*val_x_top
+
+    # 奇特的是:在上边界也能正确处理
+    return val 
+end
+
+function UpdateTracers_T_ϕ!(Tracers, Grid::Tuple, T::AbstractArray{_T,dim}, Phi::AbstractArray{_T,dim}) where {_T, dim}
+    """
+    Tracers = Tracers
+    Grid --> Gridup = Grid.coord1D
+    T    --> Tup    = Tnew_cpu
+    Phi --> Phiup   = Phi_melt_cpu
+    """
+    if isassigned(Tracers,1)        # only if the Tracers StructArray is non-empty
+        # It's true after add the first dike 
+        # Boundaries of the grid
+        Bound_min = minimum.(Grid)
+        Bound_max = maximum.(Grid)
+        N         = length.(Grid)
+        # println(Bound_max,Bound_min,N) ;
+        
+        if dim==2
+            Δx = Grid[1][2]-Grid[1][1]
+            Δz = Grid[2][2]-Grid[2][1]
+        elseif dim==3
+            Δx = Grid[1][2]-Grid[1][1]
+            Δy = Grid[2][2]-Grid[2][1]
+            Δz = Grid[3][2]-Grid[3][1]
+        end
+        for iT = 1:length(Tracers)  # 首次仅加入了244/300个tracers
+            Trac = Tracers[iT];
+            pt   = Trac.coord  # pt-->ptup
+
+            # correct point for bounds:
+            for i=1:dim
+                if pt[i]<Bound_min[i]; pt[i] = Bound_min[i]; end
+                if pt[i]>Bound_max[i]; pt[i] = Bound_max[i]; end
+            end                
+            
+            # Linear interpolation:
+            if dim==2
+                # 只对边界之内的进行插值,对于边界之外的不进行处理,使得Tracer特性不变
+                if (pt[1] > (N[1]-1)*Δx || pt[1] < Bound_min[1] || pt[2] > (N[2]-1)*Δz || pt[2] < Bound_min[2]) 
+                    println("The tracer beyond boundary! Don’t need to interpolate for it.");
+                else
+                    Trac_T = interpolate_linear_2D(pt[1], pt[2], Bound_min, N, Δx, Δz, T   )
+                    Trac_ϕ = interpolate_linear_2D(pt[1], pt[2], Bound_min, N, Δx, Δz, Phi )
+                end
+            elseif dim==3
+                Trac_T = interpolate_linear_3D(pt[1], pt[2], pt[3], Bound_min, N, Δx, Δy, Δz, T   )
+                Trac_ϕ = interpolate_linear_3D(pt[1], pt[2], pt[3], Bound_min, N, Δx, Δy, Δz, Phi )
+            end
+
+            # Update values on tracers
+            LazyRow(Tracers, iT).T = Trac_T;
+            LazyRow(Tracers, iT).Phi = Trac_ϕ;
+
+        end
+        
+    end
+
+    return nothing
+
+end
+"""
+Figure meltfraction and temperature of magma and host rock.
+"""
+
+# 绘制岩浆点
+function coordofmagma(Tracers_coordx_time,Tracers_coordz_time,Rocks_coordx_time,Rocks_coordz_time,nt,Time_vec,name,anim_magma,figpoint_magma,realnt)
+    for it = 1:100:realnt
+        """
+        Magma
+        """
+        # 获取第it行
+        # first == nonzero
+        first_rowx = Tracers_coordx_time[it, :]
+        first_rowz = Tracers_coordz_time[it, :]
+        # 获取it行不为0元素的索引
+        nonzero_indicesx = first_rowx .!= 0
+        nonzero_indicesz = first_rowz .!= 0
+        # 获取it行不为0的元素向量
+        nonzero_valuesx = first_rowx[nonzero_indicesx]
+        nonzero_valuesz = first_rowz[nonzero_indicesz]
+        # 每隔100个点画一个(one dike 2-3个)
+        plotfigx = vec(nonzero_valuesx[1:figpoint_magma:end]);
+        plotfigz = vec(nonzero_valuesz[1:figpoint_magma:end]);
+
+        # 追踪点
+        """
+        Rock
+        """
+        # 获取it行的x,z坐标
+        rock_coordx = Rocks_coordx_time[it,1:end];
+        rock_coordz = Rocks_coordz_time[it,1:end];
+        rock_coordx = reshape(rock_coordx,100,100);
+        rock_coordz = reshape(rock_coordz,100,100);
+        # 每隔10个点画一个        
+        rock_coordx = rock_coordx[1:10:end,1:10:end];
+        rock_coordz = rock_coordz[1:10:end,1:10:end];
+        rock_coordx = vec(rock_coordx);
+        rock_coordz = vec(rock_coordz);
+
+        rock_plotfigx = vec(rock_coordx[1:1:end]);
+        rock_plotfigz = vec(rock_coordz[1:1:end]);
+        """
+        对于x显示不全的问题还无法解决
+        """
+
+        # p_point = Plots.scatter(rock_plotfigx, rock_plotfigz, marker=:square, color=:blue,xlims = (0,30000),ylims = (-30000,0),label ="Rock",xlabel="Width [m]",ylabel="Depth [m]", title="Time = $(round(Time_vec[it]/kyr, digits=2)) kyrs",size = (800, 600));
+        p_point = Plots.scatter(rock_plotfigx/1e3, rock_plotfigz/1e3, marker=:square, markersize = 6,color=:blue,xlims = (0,30),ylims = (-30,0),label ="Rock",xlabel="Width [Km]",ylabel="Depth [Km]", title="Time = $(round(Time_vec[it]/kyr, digits=2)) kyrs",size = (800, 600));
+        Plots.scatter!(p_point,plotfigx/1e3, plotfigz/1e3, marker=:circle, markersize = 9,color=:red , label="Magma")
+        frame(anim_magma);# anim_magma = Animation()清空动画对象
+    end
+
+    gif(anim_magma, "$(name)_Magmapoints_time6frame.gif", fps = 6);
+    """
+    画出最后一帧(似乎意义不大)
+    """
+    #p_point = Plots.scatter(rock_plotfigx/1e3, rock_plotfigz/1e3, marker=:square, markersize = 6,color=:blue,xlims = (0,30),ylims = (-30,0),label ="Rock",xlabel="Width [Km]",ylabel="Depth [Km]", title="Time = $(round(Time_vec[it]/kyr, digits=2)) kyrs",size = (800, 600));
+    #Plots.scatter!(p_point,plotfigx/1e3, plotfigz/1e3, marker=:circle, markersize = 9,color=:red , label="Magma")
+    #savefig("Last_Frame_of_tracers.svg");
+
+end
+
+# 绘制magma与host rock的particles/tracers/markers 的温度随时间变化曲线
+
+function find_first_nonzero(matrix)
+    first_nonzero_indices = Array{Int}(undef, size(matrix, 2))
+    zero_columns = Int[]  # 用于存储全零列的索引
+
+    # 首先检查每一列是否全为零
+    for j in 1:size(matrix, 2)
+        if all(matrix[:, j] .== 0)
+            push!(zero_columns, j)  # 将全零列的索引添加到列表中
+        else
+            first_nonzero_indices[j] = findfirst(x -> x != 0, matrix[:, j])
+        end
+    end
+    # 对于全零的列，我们可以返回一个特殊的值，比如 -1，表示这一列没有非零元素
+    for col in zero_columns
+        first_nonzero_indices[col] = -1
+    end
+
+    return first_nonzero_indices
+end
+
+
+function plot_change_of_T_Phi(matrix,name,nt,dt,interval,figline_interval)
+    first_nonzero_indices = find_first_nonzero(matrix)
+    
+    Plots.plot() #清空当前图形窗口/创建新的空图形窗口
+    for i in 1:figline_interval:size(matrix, 2)  # 每隔100个列画一条线(300nTr)
+        if first_nonzero_indices[i] >= 0
+            # 如果第一行是零，则使用第一个非零索引作为起始点，否则从第一行开始
+            # start_row = first_nonzero_indices[i] == 0 ? 1 : first_nonzero_indices[i]
+            start_row = first_nonzero_indices[i];
+            # 绘制当前列的线条，从起始点开始
+            x = collect(start_row:size(matrix, 1))
+            y = matrix[start_row:end, i];
+            # plot!(x, y, label="Line $i")# 带有线段标记
+            Plots.plot!(x*dt/kyr, y,label = "");
+        end
+    end
+
+    Plots.xlabel!("Time[kyrs]");
+    Plots.ylabel!("$(name)");
+    Plots.title!("Inject_interval = $(interval)");
+
+    savefig("$(interval)$(name).svg");
+end
+
+function Extract_points(Tracers,Tracers_rock)
+    mat_T = reshape(Tracers.T[1:996004], 998, 998);
+    sampled_mat_T = mat_T[1:10:end, 1:10:end];
+    sampled_vec_T = vec(sampled_mat_T);
+
+    mat_coord = reshape(Tracers.coord[1:996004], 998, 998);
+    sampled_mat_coord = mat_coord[1:10:end, 1:10:end];
+    sampled_vec_coord = vec(sampled_mat_coord);
+
+    mat_Phi = reshape(Tracers.Phi[1:996004], 998, 998);
+    sampled_mat_Phi = mat_Phi[1:10:end, 1:10:end];
+    sampled_vec_Phi = vec(sampled_mat_Phi);
+
+    Tracers_rock.T .=  sampled_vec_T;
+    Tracers_rock.coord .=  sampled_vec_coord;
+    Tracers_rock.Phi .= sampled_vec_Phi;
+
+    return Tracers_rock;
+end
+
+# 确定锆石开始生长的年龄
+function Tracersage(Tracers,Time_vec,it)
+    for i = 1:length(Tracers)
+        # 注意索引方式:
+        # Tracers.Phi[i] 正确
+        # Tracers[i].Phi 错误!
+        if Tracers.Phi[i] > 0.01
+            if Tracers.flag[i] == 0
+                if Tracers.T[i] > 1000 
+                    LazyRow(Tracers, i).flag = 0;
+                    LazyRow(Tracers, i).age = Time_vec[it]/kyr;
+                else Tracers[i].T <= 1000 
+                    LazyRow(Tracers, i).flag = 1;
+                    LazyRow(Tracers, i).age = Time_vec[it]/kyr;
+                end
+            elseif Tracers[i].flag == 1
+                if Tracers[i].T > 1000 
+                    LazyRow(Tracers, i).flag = 0;
+                    LazyRow(Tracers, i).age = Time_vec[it]/kyr;
+                else Tracers[i].T <= 1000 
+
+                    nothing;
+                end
+            end
+        end
+    end
+
+    return Tracers
+end
+
+# 绘制zircon开始生长的年龄分布
+function plot_zircon_age(Tracers)
+    # 首先取出meltfraction>0.01的Trcaers ,这会过滤掉大部分tracers of rock.
+    Tracers_filter = Tracers[Tracers.Phi .> 0.01]
+    # 间隔1000取样是为了在heatmap上容易观察
+    Tracers_filter = Tracers_filter[1:1000:end]
+    xtracers = [coord[1] for coord in Tracers_filter.coord[1:end]];
+    ztracers = [coord[2] for coord in Tracers_filter.coord[1:end]];
+    tracers_age = Tracers_filter.age
+    # 绘制散点图，其中点的颜色表示年龄
+    Plots.scatter(xtracers/1e3, ztracers/1e3, zcolor=tracers_age, 
+            color=:viridis,  # 使用温度图颜色映射
+            # color=:magma,  # 使用温度图颜色映射
+            marker=:circle,  # 点的形状
+            markersize=5,    # 点的大小
+            cbar=true,       # 显示颜色条
+            xlabel="Width[Km]", 
+            ylabel="Depth[Km]", 
+            title="Zircon age",
+            xlims = (0,30),
+            ylims = (-30,0),
+            label ="Zircon_age",
+            colorbar_title="Time[kyrs]",
+            legend=false)
+    savefig("Zircon_age.svg");
+end
+
+function plot_eruptible_melt!(Tracers,Time_vec,it,nt,InjectVol,Eruptible_volume,Eruptible_percentage,Rock_melt_perc,Magma_melt_perc)
+    # 提取 melt_fraction > 0.5的所有melt (Eruptible melt batch)
+    Tracers_filter = Tracers[Tracers.Phi .> 0.5]
+    # 这里不需要间隔取
+    Tracers_filter = Tracers_filter[1:1:end]
+    xtracers = [coord[1] for coord in Tracers_filter.coord[1:end]];
+    ztracers = [coord[2] for coord in Tracers_filter.coord[1:end]];
+           
+    # 网格大小
+    grid_size = (300, 300)  # (rows, columns)# 建议进一步提升网格尺寸(待完成)
+    # 提升网格尺寸到500*500时会发现,有部分点在熔体之内达不到0.5
+    # 这是算法的问题!!!
+    # 网格范围
+    x_range = (0, 30000)
+    z_range = (-30000, 0)
+    
+    # 创建网格，确保是二维数组
+    heatmap_z = zeros(grid_size[1], grid_size[2])
+    
+    # 计算每个网格的实际尺寸单位
+    x_unit = (x_range[2] - x_range[1]) / grid_size[2]
+    z_unit = (z_range[2] - z_range[1]) / grid_size[1]  
+    
+    # 映射坐标到网格并更新计数
+    for (x, z) in zip(xtracers, ztracers)
+        ix = floor(Int, (x - x_range[1]) / x_unit) + 1
+        iz = floor(Int, (z - z_range[1]) / z_unit) + 1
+        if ix >= 1 && ix <= grid_size[2] && iz >= 1 && iz <= grid_size[1]
+            heatmap_z[iz, ix] = 1;
+        end
+    end
+    # 为了显示坐标轴的范围
+    x_axis = range(0, stop=30, length=300)   # x轴从0到30，总共300个点
+    z_axis = range(-30, stop=0, length=300)  # z轴从-30到0，总共300个点
+    
+    """
+    t = 25kyr;it = 3563;
+    julia> Eruptible_volume[it]
+    972.0[km³]
+    julia> Eruptible_percentage[it]
+    0.41
+    """
+    
+    # 计算可喷发熔体的体积,及其所占侵入岩浆的百分数
+    proportion_of_eruptible_melt = mean(heatmap_z .== 1);
+    if InjectVol == 0 || it < 100
+        Eruptible_volume[it] = 0;
+        Eruptible_percentage[it] = 1;
+    else
+        Eruptible_volume[it] =   round(proportion_of_eruptible_melt * 30*30*10, digits=2);
+        Eruptible_percentage[it] = round(Eruptible_volume[it]/(InjectVol*10/(4/3*2.5)/km³), digits=2);
+    end
+    # 计算可喷发熔体中rock占比与magam占比
+    if length(Tracers_filter) == 0
+        Rock_melt_perc[it] = 0;
+        Magma_melt_perc[it] = 1;
+        # 防止因Tracers_filter长度为零生成NaN值,rock为0,magma为1是因为热的熔体起初来自magma
+    else
+        Rock_melt_perc[it] = mean(Tracers_filter.Phase .== 1);
+        Magma_melt_perc[it] = mean(Tracers_filter.Phase .== 2);
+    end
+
+    # 生成热图(每隔500个时间步)
+    if mod(it,500)==0 || it == nt
+        #Plots.heatmap(1:grid_size[2], 1:grid_size[1], heatmap_z, title="Eruptible melt batch", xlabel="Width[Km]", ylabel="Depth[Km]", xlims=(x_range[1]/1e3,x_range[end]/1e3), ylims=(z_range[1]/1e3,z_range[end]/1e3),color=:viridis, cbar=true)
+        Plots.heatmap(x_axis,z_axis, heatmap_z, title="Eruptible melt batch Time=$(round(Time_vec[it] / kyr, digits=1))kyr", xlabel="Width[Km]", ylabel="Depth[Km]",  color=:viridis, cbar=true,colorbar_title="Whether eruptible")
+        savefig("$(round(Time_vec[it] / kyr, digits=1))kyr_Eruptible_melt0.5_300.svg");
+    end
+end
+
+
+function MainCode_2D()
+
+    Nx,Nz                   =   500,500
+    Grid                    =   CreateGrid(size=(Nx,Nz), extent=(30e3, 30e3)) # grid points & domain size
+    Num                     =   Numeric_params(verbose=false) # diffusion.jl                  # Nonlinear solver options
+    MatParam                =   (
+                   SetMaterialParams(Name="Rock", Phase=1, 
+                        Density    = ConstantDensity(ρ=2800kg/m^3),               
+                      HeatCapacity = ConstantHeatCapacity(cp=1050J/kg/K), 
+                      Conductivity = ConstantConductivity(k=1.5Watt/K/m),       
+                        LatentHeat = ConstantLatentHeat(Q_L=350e3J/kg),
+                           Melting = MeltingParam_Caricchi()),
+                                       )
+    # initialize parameters
+    GeoT                    =   20.0/1e3;                   # Geothermal gradient [K/km]
+    W_in, H_in              =   5e3,    0.2e3;              # Width and thickness of dike
+    T_in                    =   1170;                        # Intrusion temperature
+    InjectionInterval       =   0.083kyr;                     # Inject a new dike every X kyrs
+    maxTime                 =   30kyr;                      # Maximum simulation time in kyrs
+    H_ran, W_ran            =   Grid.L.*[0.3; 0.4];         # Size of domain in which we randomly place dikes and range of angles   
+    DikeType                =   "ElasticDike"               # Type to be injected ("ElasticDike","SquareDike")
+    κ                       =   1.2/(2800*1050);            # thermal diffusivity   
+    dt                      =   minimum(Grid.Δ.^2)/κ/40;    # stable timestep (required for explicit FD)
+    nt                      =   floor(Int64,maxTime/dt);    # number of required timesteps
+    nTr_dike                =   1107;                        # number of tracers inserted per dike
+
+    Arrays = CreateArrays(Dict( (Nx,  Nz)=>(T=0,T_K=0, T_it_old=0, K=1.5, Rho=2800, Cp=1050, Tnew=0,  Hr=0, Hl=0, Kc=1, P=0, X=0, Z=0, ϕₒ=0, ϕ=0, dϕdT=0),
+    (Nx-1,Nz)=>(qx=0,Kx=0), (Nx, Nz-1)=>(qz=0,Kz=0 ) ))
+    
+    Tnew_cpu                =   Matrix{Float64}(undef, Grid.N...)
+    Phi_melt_cpu            =   similar(Tnew_cpu)
+    Phases      =   ones(Int64,Grid.N...)   
+    @parallel (1:Nx, 1:Nz) GridArray!(Arrays.X,  Arrays.Z, Grid.coord1D[1], Grid.coord1D[2])   
+
+    Tracers                 =   StructArray{Tracer}(undef, 1)                           # Initialize tracers   
+    # Phase == 1(rock)
+    Tracers_rock            =   StructArray{Tracer}(undef, 100*100) 
+    dike                    =   Dike(W=W_in,H=H_in,Type=DikeType,T=T_in);               # "Reference" dike with given thickness,radius and T
+    Arrays.T               .=   -Arrays.Z.*GeoT;                                        # Initial (linear) temperature profile
+
+    ENV["GKSwstype"]="nul"; if isdir("$(InjectionInterval/kyr)viz2D_out")==false mkdir("$(InjectionInterval/kyr)viz2D_out") end; loadpath = "./$(InjectionInterval/kyr)viz2D_out/"; anim = Animation(loadpath,String[])
+    if isdir("$(InjectionInterval/kyr)pointsmagma_out")==false mkdir("$(InjectionInterval/kyr)pointsmagma_out") end; loadpath_magma = "./$(InjectionInterval/kyr)pointsmagma_out/"; anim_magma = Animation(loadpath_magma,String[])
+    # if isdir("$(InjectionInterval/kyr)pointsmagma_out1")==false mkdir("$(InjectionInterval/kyr)pointsmagma_out1") end; loadpath_magma1 = "./$(InjectionInterval/kyr)pointsmagma_out1/"; anim_magma1 = Animation(loadpath_magma1,String[])
+
+    time, dike_inj, InjectVol, Time_vec,Melt_Time = 0.0, 0.0, 0.0,zeros(nt,1),zeros(nt,1);
+    Eruptible_volume = zeros(nt,1);# 可喷发熔体体积
+    Eruptible_percentage = zeros(nt,1);# 可喷发熔体占侵入岩浆的比例
+    Rock_melt_perc = zeros(nt,1);
+    Magma_melt_perc = zeros(nt,1);
+
+    # track traceers of magma
+    Tracers_temperature_time = zeros(nt,Int(1107*300*maxTime/25/kyr));
+    Tracers_meltfraction_time = zeros(nt,Int(1107*300*maxTime/25/kyr)); 
+    Tracers_coordx_time = zeros(nt,Int(1107*300*maxTime/25/kyr));
+    Tracers_coordz_time = zeros(nt,Int(1107*300*maxTime/25/kyr));
+    # track tracers of rock 
+    Rocks_temperature_time = zeros(nt,100*100);
+    Rocks_meltfraction_time = zeros(nt,100*100); 
+    Rocks_coordx_time = zeros(nt,100*100);
+    Rocks_coordz_time = zeros(nt,100*100);
+    # 加在这似乎有点不妥
+    Tracers = Addrock_tracers2D(Arrays.T,Tracers, Grid.coord1D);
+
+    # 初始化标志及年龄全为0
+    Tracers.flag .= 0;
+    Tracers.age .= 0;
+   
+    realnt = nt;
+    for it = 1:realnt  # Time loop
+        if it < 3563
+            if floor(time/InjectionInterval) >  dike_inj       # Add new dike every X years
+                dike_inj  =     floor(time/InjectionInterval)                                               # Keeps track on what was injected already
+                cen       =     (Grid.max .+ Grid.min)./2 .+ rand(-0.5:1e-3:0.5, 2).*[W_ran;H_ran];         # Randomly vary center of dike 
+                if cen[end]<-12e3;  
+                    Angle_rand = rand( 80.0:0.1:100.0)                                      # Orientation: near-vertical @ depth             
+                else                
+                    Angle_rand = rand(-10.0:0.1:10.0); 
+                end                                  # Orientation: near-vertical @ shallower depth     
+                dike      =     Dike(dike, Center=cen[:],Angle=[Angle_rand]);                               # Specify dike with random location/angle but fixed size/T 
+                Tnew_cpu .=     Array(Arrays.T)
+                Tracers, Tnew_cpu, Vol   =   InjectDike(Tracers, Tnew_cpu, Grid.coord1D, dike, nTr_dike);   # Add dike, move hostrocks
+                Arrays.T .=     Data.Array(Tnew_cpu)
+                InjectVol +=    Vol                                                                 # Keep track of injected volume
+                println("Added new dike; total injected magma volume = $(round(InjectVol/km³,digits=2)) km³; rate Q=$(round(InjectVol/(time),digits=2)) m³/s")
+            end
+        end
+        rockend = ( (length(Grid.coord1D[1])-1)*2 ) * ( (length(Grid.coord1D[2])-1)*2 );
+        dikebegin = rockend + 1;
+        figurerock_end = 100*100;
+        # Extract points at intervals of 10
+        Tracers_rock = Extract_points(Tracers,Tracers_rock);
+
+        Rocks_temperature_time[it,1:length(Tracers_rock.T[1:figurerock_end])] .= Tracers_rock.T[1:figurerock_end];
+        Rocks_coordx_time[it,1:length(Tracers_rock.coord[1:figurerock_end])]  .= [coord[1] for coord in Tracers_rock.coord[1:figurerock_end]];
+        Rocks_coordz_time[it,1:length(Tracers_rock.coord[1:figurerock_end])]  .= [coord[2] for coord in Tracers_rock.coord[1:figurerock_end]];
+        Rocks_meltfraction_time[it,1:length(Tracers_rock.Phi[1:figurerock_end])]  .= Tracers_rock.Phi[1:figurerock_end];
+        # 为什么要加if条件,因为刚开始Tracers处于undef状态(虽然加入rocktracers后无所谓了)
+        if (dike_inj >0)
+            Tracers_temperature_time[it,1:length(Tracers.T[dikebegin:end])] .= Tracers.T[dikebegin:end];
+            Tracers_coordx_time[it,1:length(Tracers.coord[dikebegin:end])] .= [coord[1] for coord in Tracers.coord[dikebegin:end]];
+            Tracers_coordz_time[it,1:length(Tracers.coord[dikebegin:end])] .= [coord[2] for coord in Tracers.coord[dikebegin:end]];
+            Tracers_meltfraction_time[it,1:length(Tracers.Phi[dikebegin:end])] .= Tracers.Phi[dikebegin:end];
+        end
+        # count(x -> x > 0, atest[1,:])  # 一行数组大于0元素的个数
+        # start_index = findfirst(x -> x != 0, a)  #找到首个不为0的索引plot(start_index:length(a), a[start_index:end])
+
+        Nonlinear_Diffusion_step_2D!(Arrays, MatParam, Phases, Grid, dt, Num)   # Perform a nonlinear diffusion step
+
+        copy_arrays_GPU2CPU!(Tnew_cpu, Phi_melt_cpu, Arrays.Tnew, Arrays.ϕ)     # Copy arrays to CPU to update properties
+        UpdateTracers_T_ϕ!(Tracers, Grid.coord1D, Tnew_cpu, Phi_melt_cpu);      # Update info on tracers 
+
+        @parallel assign!(Arrays.T, Arrays.Tnew)
+        @parallel assign!(Arrays.Tnew, Arrays.T)                                # Update temperature
+        time                =   time + dt;                                      # Keep track of evolved time
+        Melt_Time[it]       =   sum(Arrays.ϕ)/prod(Grid.N)                      # Melt fraction in crust    
+        Time_vec[it]        =   time;                                           # Vector with time
+        println(" Timestep $it = $(round(time/kyr*100)/100) kyrs")
+
+
+        # 循环为Tracers确定age
+        Tracers = Tracersage(Tracers,Time_vec,it);
+
+        # 绘制可喷发熔体分布(每隔500个时间步)
+        plot_eruptible_melt!(Tracers,Time_vec,it,nt,InjectVol,Eruptible_volume,Eruptible_percentage,Rock_melt_perc,Magma_melt_perc);
+        # 绘制可喷发熔体的体积随时间的变化(估算)
+
+        if mod(it,20)==0  # Visualisation
+            x,z         =   Grid.coord1D[1], Grid.coord1D[2]
+            # p1          =   Plots.heatmap(x/1e3, z/1e3, Array(Arrays.T)',  aspect_ratio=1, xlims=(x[1]/1e3,x[end]/1e3), ylims=(z[1]/1e3,z[end]/1e3),   c=:lajolla, clims=(0.,900.), xlabel="Width [km]",ylabel="Depth [km]", title="$(round(time/kyr, digits=2)) kyrs,  InjectionInterval = $(InjectionInterval/kyr)kyrs,  Injectrate =  $(0.1*0.83/(InjectionInterval/kyr))m³/s", dpi=200, fontsize=6, colorbar_title="Temperature")
+            p1          =   Plots.heatmap(x/1e3, z/1e3, Array(Arrays.T)',  aspect_ratio=1, xlims=(x[1]/1e3,x[end]/1e3), ylims=(z[1]/1e3,z[end]/1e3),   c=:lajolla, clims=(0.,1200.), xlabel="Width [km]",ylabel="Depth [km]", title="Time = $(round(time/kyr, digits=2)) kyrs", dpi=200, fontsize=2, colorbar_title="Temperature")
+            p2          =   Plots.heatmap(x/1e3,z/1e3, Array(Arrays.ϕ)',  aspect_ratio=1, xlims=(x[1]/1e3,x[end]/1e3), ylims=(z[1]/1e3,z[end]/1e3),   c=:coolwarm,    clims=(0., 1. ), xlabel="Width [km]", title="Injectrate =  $(0.1*0.83/(InjectionInterval/kyr))m³/s",   dpi=200, fontsize=2, colorbar_title="Melt Fraction")
+            Plots.plot(p1, p2, layout=(1,2), size=(600, 300));frame(anim)
+        end
+        
+    end
+
+
+    # 绘制温度与熔融分数heatmap
+
+    gif(anim, "Example2D_$(InjectionInterval/kyr).gif", fps = 14)   # create gif animation
+
+    # Tracers_temperature_time,Tracers_meltfraction_time,Time_vec, Melt_Time, Tracers, Grid, Arrays = MainCode_2D();
+
+    x,z         =   Grid.coord1D[1], Grid.coord1D[2]
+    p1          =   Plots.heatmap(x/1e3, z/1e3, Array(Arrays.T)',  aspect_ratio=1, xlims=(x[1]/1e3,x[end]/1e3), ylims=(z[1]/1e3,z[end]/1e3),   c=:lajolla, clims=(0.,1200.), xlabel="Width [km]",ylabel="Depth [km]", title="Time = $(round(time/kyr, digits=2)) kyrs", dpi=200, fontsize=2, colorbar_title="Temperature")
+    p2          =   Plots.heatmap(x/1e3,z/1e3, Array(Arrays.ϕ)',  aspect_ratio=1, xlims=(x[1]/1e3,x[end]/1e3), ylims=(z[1]/1e3,z[end]/1e3),   c=:coolwarm,    clims=(0., 1. ), xlabel="Width [km]", title="Injectrate =  $(0.1*0.83/(InjectionInterval/kyr))m³/s",   dpi=200, fontsize=2, colorbar_title="Melt Fraction")
+    Plots.plot(p1, p2, layout=(1,2), size=(600, 300))
+    savefig("Last_Frame_of_heatmap.svg");
+
+
+    # 平均熔融分数变化(add dike 肯定是增加的)
+    # plot(Time_vec/kyr, Melt_Time, xlabel="Time [kyrs]", ylabel="Fraction of crust that is molten", label=:none); png("Time_vs_Melt_Example2D") # Create plot
+    # 注意这里对于没有赋值的后半段向量,绘图结束之后会出现曲线尾端与(0,0)相连的情况,要指定绘图范围
+    Plots.plot(Time_vec[30:realnt]/kyr,Rock_melt_perc[30:realnt], xlabel="Time [kyrs]", ylabel="Percentage",ylim = (0,1),title="The proportion of Rock in the melt" ,label=:none); 
+    savefig("Rock_melt_perc.svg");
+    Plots.plot(Time_vec[30:realnt]/kyr,Magma_melt_perc[30:realnt], xlabel="Time [kyrs]", ylabel="Percentage",ylim = (0,1),title="The proportion of Magma in the melt" ,label=:none); 
+    savefig("Magma_melt_perc.svg");
+    Plots.plot(Time_vec[30:realnt]/kyr,Eruptible_volume[30:realnt], xlabel="Time [kyrs]", ylabel="Volume[km³]",title="The volume of Eruptible melt" ,label=:none); 
+    savefig("Eruptible_volume.svg");
+    Plots.plot(Time_vec[30:realnt]/kyr,Eruptible_percentage[30:realnt], xlabel="Time [kyrs]", ylabel="Percentage",title="The proportion of eruptible melt in Injected magma", label=:none); 
+    savefig("Eruptible_percentage.svg");
+
+    # dike interval
+
+    interval= "$(InjectionInterval/kyr)kyr";
+    figline_magma = 350; # 870/1107 interval = 350 result is 2-3 tracers per dike
+    figline_rock = 10;
+    figpoint_magma = 350;
+
+    # 绘制magma/rock温度及熔融分数曲线
+
+    name="Magma_temperature";
+    plot_change_of_T_Phi(Tracers_temperature_time,name,nt,dt,interval,figline_magma);
+
+    name="Rock_temperature";
+    plot_change_of_T_Phi(Rocks_temperature_time,name,nt,dt,interval,figline_rock );
+
+    name="Magma_meltfraction";
+    plot_change_of_T_Phi(Tracers_meltfraction_time,name,nt,dt,interval,figline_magma);
+
+    name="Rock_meltfraction";
+    plot_change_of_T_Phi(Rocks_meltfraction_time,name,nt,dt,interval,figline_rock );
+
+    # 绘制岩浆点
+    name = "interval=$(InjectionInterval/kyr)kyr";
+    coordofmagma(Tracers_coordx_time,Tracers_coordz_time,Rocks_coordx_time,Rocks_coordz_time,nt,Time_vec,name,anim_magma,figpoint_magma,realnt);
+    # 绘制锆石年龄分布
+    plot_zircon_age(Tracers);
+    # 绘制最后时刻的可喷发熔体分布
+    plot_eruptible_melt!(Tracers,Time_vec,realnt,realnt,InjectVol,Eruptible_volume,Eruptible_percentage,Rock_melt_perc,Magma_melt_perc);
+end
+Time_vec, Melt_Time, Tracers, Grid, Arrays = MainCode_2D();
